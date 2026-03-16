@@ -156,12 +156,12 @@ describe("bridge service turn control", () => {
     const namespace = randomUUID();
     const config = loadBridgeConfig(
       {
-        WORKSPACE_PATH: "/workspace/codex-feishu-bridge",
+        WORKSPACE_PATH: process.cwd(),
         BRIDGE_STATE_DIR: `.tmp/${namespace}/state`,
         CODEX_HOME: `.tmp/${namespace}/codex-home`,
         BRIDGE_UPLOADS_DIR: `.tmp/${namespace}/uploads`,
       },
-      "/workspace/codex-feishu-bridge",
+      process.cwd(),
     );
     const logger = createConsoleLogger("bridge-service-turn-control-test");
     await prepareBridgeDirectories(config);
@@ -206,12 +206,12 @@ describe("bridge service turn control", () => {
     const namespace = randomUUID();
     const config = loadBridgeConfig(
       {
-        WORKSPACE_PATH: "/workspace/codex-feishu-bridge",
+        WORKSPACE_PATH: process.cwd(),
         BRIDGE_STATE_DIR: `.tmp/${namespace}/state`,
         CODEX_HOME: `.tmp/${namespace}/codex-home`,
         BRIDGE_UPLOADS_DIR: `.tmp/${namespace}/uploads`,
       },
-      "/workspace/codex-feishu-bridge",
+      process.cwd(),
     );
     const logger = createConsoleLogger("bridge-service-turn-control-test");
     await prepareBridgeDirectories(config);
