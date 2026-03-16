@@ -23,3 +23,6 @@
 - Implemented Feishu root-message binding, threaded updates, webhook reply routing, and duplicate event suppression.
 - Added a CLI wrapper for `list`, `import`, `resume`, and `send` against the bridge daemon.
 - Fixed a persistence race by serializing state-file writes before restart recovery was enabled.
+- Merged the historical root `PLAN.md` draft into `docs/plan.md` and removed the extra root plan entry point.
+- Locked `docs/plan.md` as the only execution-plan source for future agents.
+- Marked the next iteration as live validation of real `stdio codex app-server`, real Feishu webhook traffic, and real VSCode extension loading.

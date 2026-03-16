@@ -5,7 +5,7 @@
 - Date: 2026-03-17
 - Repository phase: v1 local workflow implemented
 - Runtime mode: CLI-first Codex runtime with Docker-first development
-- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, and recovery paths are implemented and locally validated
+- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, and recovery paths are implemented; the next iteration is live validation against real runtime and real ingress
 
 ## Completed
 
@@ -21,18 +21,20 @@
 - Implemented manual thread import/resume plus a small CLI wrapper
 - Implemented recovery reconciliation and stale approval expiration on restart
 
-## In Progress
+## Implemented But Not Yet Live-Validated
 
-- Updating agent-facing docs to reflect the implemented state instead of the original scaffold state
+- Real `stdio codex app-server` traffic has not yet been revalidated end to end against the host login state
+- Real Feishu app credentials and the user-provided public callback URL are still external runtime inputs
+- VSCode extension behavior has been locally tested against mocks but still needs a live daemon validation pass
 
-## Blockers
+## Next Iteration Focus
 
-- Real `codex app-server` traffic against a logged-in ChatGPT account is not yet re-validated end-to-end in this repository
-- Real Feishu app credentials and公网 callback tunnel are still user-supplied runtime inputs
-- There is still no dedicated cloud relay or multi-user deployment path
+- Revalidate `bridge-daemon` in `CODEX_RUNTIME_BACKEND=stdio` mode against a real host Codex login
+- Revalidate Feishu root-message creation, reply routing, and duplicate suppression against live webhook traffic
+- Add explicit live-loading guidance for the VSCode extension and bridge CLI workflow
 
-## Next Step
+## Deferred Decisions
 
-- Run a live end-to-end validation with a real Codex login and a real Feishu app
-- Decide whether to add a first-class standalone CLI app package instead of keeping the wrapper in `scripts/`
-- Add stronger diagnostics for live `stdio` failures and tunnel outages
+- Whether to promote the CLI wrapper into a dedicated `apps/` package instead of keeping it under `scripts/`
+- Whether to add stronger diagnostics for tunnel health and Feishu delivery failures
+- Whether a future cloud relay or multi-user deployment path belongs in scope after live validation
