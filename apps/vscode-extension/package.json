@@ -1,0 +1,160 @@
+{
+  "name": "@codex-feishu-bridge/vscode-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VSCode desktop frontend for the Codex and Feishu bridge project.",
+  "displayName": "Codex Feishu Bridge",
+  "publisher": "local-dev",
+  "main": "./dist/extension.js",
+  "engines": {
+    "node": ">=20.0.0",
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:codexFeishuBridge.tasks",
+    "onCommand:codexFeishuBridge.refresh",
+    "onCommand:codexFeishuBridge.login",
+    "onCommand:codexFeishuBridge.newTask",
+    "onCommand:codexFeishuBridge.resumeTask",
+    "onCommand:codexFeishuBridge.importThreads",
+    "onCommand:codexFeishuBridge.sendMessage",
+    "onCommand:codexFeishuBridge.interruptTask",
+    "onCommand:codexFeishuBridge.approveCommand",
+    "onCommand:codexFeishuBridge.approveFileChange",
+    "onCommand:codexFeishuBridge.retryTurn",
+    "onCommand:codexFeishuBridge.openDiff",
+    "onCommand:codexFeishuBridge.openTaskDetails",
+    "onCommand:codexFeishuBridge.openStatus"
+  ],
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "codexFeishuBridge.tasks",
+          "name": "Codex Bridge Tasks"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codexFeishuBridge.refresh",
+        "title": "Codex Bridge: Refresh Tasks"
+      },
+      {
+        "command": "codexFeishuBridge.login",
+        "title": "Codex Bridge: Login"
+      },
+      {
+        "command": "codexFeishuBridge.newTask",
+        "title": "Codex Bridge: New Task"
+      },
+      {
+        "command": "codexFeishuBridge.resumeTask",
+        "title": "Codex Bridge: Resume Task"
+      },
+      {
+        "command": "codexFeishuBridge.importThreads",
+        "title": "Codex Bridge: Import Threads"
+      },
+      {
+        "command": "codexFeishuBridge.sendMessage",
+        "title": "Codex Bridge: Send Message"
+      },
+      {
+        "command": "codexFeishuBridge.interruptTask",
+        "title": "Codex Bridge: Interrupt Task"
+      },
+      {
+        "command": "codexFeishuBridge.approveCommand",
+        "title": "Codex Bridge: Approve Command"
+      },
+      {
+        "command": "codexFeishuBridge.approveFileChange",
+        "title": "Codex Bridge: Approve File Change"
+      },
+      {
+        "command": "codexFeishuBridge.retryTurn",
+        "title": "Codex Bridge: Retry Task"
+      },
+      {
+        "command": "codexFeishuBridge.openDiff",
+        "title": "Codex Bridge: Open Task Diff"
+      },
+      {
+        "command": "codexFeishuBridge.openTaskDetails",
+        "title": "Codex Bridge: Open Task Details"
+      },
+      {
+        "command": "codexFeishuBridge.openStatus",
+        "title": "Codex Bridge: Open Status"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexFeishuBridge.refresh",
+          "when": "view == codexFeishuBridge.tasks",
+          "group": "navigation"
+        },
+        {
+          "command": "codexFeishuBridge.newTask",
+          "when": "view == codexFeishuBridge.tasks",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codexFeishuBridge.openTaskDetails",
+          "when": "view == codexFeishuBridge.tasks && viewItem == bridgeTask",
+          "group": "inline"
+        },
+        {
+          "command": "codexFeishuBridge.openDiff",
+          "when": "view == codexFeishuBridge.tasks && viewItem == bridgeTask",
+          "group": "inline"
+        },
+        {
+          "command": "codexFeishuBridge.sendMessage",
+          "when": "view == codexFeishuBridge.tasks && viewItem == bridgeTask",
+          "group": "navigation"
+        },
+        {
+          "command": "codexFeishuBridge.interruptTask",
+          "when": "view == codexFeishuBridge.tasks && viewItem == bridgeTask",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex Feishu Bridge",
+      "properties": {
+        "codexFeishuBridge.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "Local bridge-daemon HTTP base URL."
+        },
+        "codexFeishuBridge.wsPath": {
+          "type": "string",
+          "default": "/ws",
+          "description": "WebSocket path exposed by the bridge-daemon."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@codex-feishu-bridge/protocol": "0.1.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "node -e \"console.log('lint placeholder: vscode-extension')\"",
+    "test": "tsx --test tests/*.test.ts"
+  }
+}

@@ -1,0 +1,366 @@
+import * as path from "node:path";
+
+import * as vscode from "vscode";
+
+import type { BridgeTask, QueuedApproval } from "@codex-feishu-bridge/protocol";
+
+import { BridgeClient } from "./core/bridge-client";
+import { TaskStore } from "./core/task-store";
+import { openStatusPanel, openTaskDetailPanel } from "./panels/task-detail-panel";
+import { TaskTreeItem, TaskTreeProvider } from "./providers/task-tree";
+
+interface ExtensionServices {
+  client: BridgeClient;
+  store: TaskStore;
+}
+
+function bridgeConfiguration(): { baseUrl: string; wsPath: string } {
+  const config = vscode.workspace.getConfiguration("codexFeishuBridge");
+  return {
+    baseUrl: config.get<string>("baseUrl", "http://127.0.0.1:8787"),
+    wsPath: config.get<string>("wsPath", "/ws"),
+  };
+}
+
+function mimeTypeForPath(targetPath: string): string {
+  const extension = path.extname(targetPath).toLowerCase();
+  switch (extension) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+async function pickTask(store: TaskStore, placeholder: string, predicate?: (task: BridgeTask) => boolean): Promise<BridgeTask | undefined> {
+  const candidates = store
+    .listTasks()
+    .filter((task) => (predicate ? predicate(task) : true))
+    .map((task) => ({
+      label: task.title,
+      description: task.status,
+      detail: task.workspaceRoot,
+      task,
+    }));
+
+  if (candidates.length === 0) {
+    vscode.window.showInformationMessage("No matching Codex bridge tasks were found.");
+    return undefined;
+  }
+
+  const selection = await vscode.window.showQuickPick(candidates, { placeHolder: placeholder });
+  return selection?.task;
+}
+
+async function resolveTaskArgument(store: TaskStore, taskOrItem?: BridgeTask | TaskTreeItem): Promise<BridgeTask | undefined> {
+  if (!taskOrItem) {
+    return undefined;
+  }
+
+  if (taskOrItem instanceof TaskTreeItem) {
+    return taskOrItem.task;
+  }
+
+  return taskOrItem;
+}
+
+async function uploadImages(services: ExtensionServices, task: BridgeTask): Promise<string[]> {
+  const wantsAttachments = await vscode.window.showQuickPick(
+    [
+      { label: "No attachments", attach: false },
+      { label: "Attach images", attach: true },
+    ],
+    {
+      placeHolder: "Attach local images to this message?",
+    },
+  );
+
+  if (!wantsAttachments?.attach) {
+    return [];
+  }
+
+  const files = await vscode.window.showOpenDialog({
+    canSelectMany: true,
+    openLabel: "Upload images",
+    filters: {
+      Images: ["png", "jpg", "jpeg", "gif", "webp"],
+    },
+  });
+  if (!files?.length) {
+    return [];
+  }
+
+  const assetIds: string[] = [];
+  for (const file of files) {
+    const content = await vscode.workspace.fs.readFile(file);
+    const upload = await services.client.uploadTaskImage(task.taskId, {
+      fileName: path.basename(file.fsPath),
+      mimeType: mimeTypeForPath(file.fsPath),
+      contentBase64: Buffer.from(content).toString("base64"),
+    });
+    assetIds.push(upload.asset.assetId);
+  }
+
+  await services.store.refresh();
+  return assetIds;
+}
+
+async function withTaskMessage(
+  services: ExtensionServices,
+  task: BridgeTask,
+  options?: { title?: string; placeholder?: string; initialValue?: string },
+): Promise<void> {
+  const content = await vscode.window.showInputBox({
+    title: options?.title ?? `Message ${task.title}`,
+    placeHolder: options?.placeholder ?? "Send a message to the Codex task",
+    value: options?.initialValue,
+  });
+
+  if (content === undefined) {
+    return;
+  }
+
+  const imageAssetIds = await uploadImages(services, task);
+  await services.client.sendMessage(task.taskId, {
+    content,
+    imageAssetIds,
+  });
+  await services.store.refresh();
+}
+
+async function approveByKind(
+  services: ExtensionServices,
+  taskOrItem: BridgeTask | TaskTreeItem | undefined,
+  kind: QueuedApproval["kind"],
+): Promise<void> {
+  const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+    (await pickTask(services.store, `Select a task with pending ${kind} approvals`, (candidate) =>
+      candidate.pendingApprovals.some((approval) => approval.kind === kind && approval.state === "pending"),
+    ));
+  if (!task) {
+    return;
+  }
+
+  const approvals = task.pendingApprovals.filter((approval) => approval.kind === kind && approval.state === "pending");
+  if (approvals.length === 0) {
+    vscode.window.showInformationMessage(`No pending ${kind} approvals were found for ${task.title}.`);
+    return;
+  }
+
+  const selectedApproval =
+    approvals.length === 1
+      ? approvals[0]
+      : (
+          await vscode.window.showQuickPick(
+            approvals.map((approval) => ({
+              label: approval.reason,
+              description: approval.requestId,
+              approval,
+            })),
+            { placeHolder: `Select a ${kind} approval to resolve` },
+          )
+        )?.approval;
+  if (!selectedApproval) {
+    return;
+  }
+
+  const decision = await vscode.window.showQuickPick(
+    [
+      { label: "Accept", value: "accept" as const },
+      { label: "Decline", value: "decline" as const },
+      { label: "Cancel", value: "cancel" as const },
+    ],
+    { placeHolder: "Choose an approval decision" },
+  );
+  if (!decision) {
+    return;
+  }
+
+  await services.client.resolveApproval(task.taskId, selectedApproval, decision.value);
+  await services.store.refresh();
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const client = new BridgeClient(bridgeConfiguration());
+  const services: ExtensionServices = {
+    client,
+    store: new TaskStore(client),
+  };
+
+  const treeProvider = new TaskTreeProvider(services.store);
+
+  context.subscriptions.push(
+    treeProvider,
+    vscode.window.registerTreeDataProvider("codexFeishuBridge.tasks", treeProvider),
+  );
+
+  context.subscriptions.push({
+    dispose() {
+      services.store.dispose();
+    },
+  });
+
+  void services.store.start().catch((error: unknown) => {
+    void vscode.window.showErrorMessage(
+      error instanceof Error ? `Failed to start Codex bridge store: ${error.message}` : "Failed to start Codex bridge store.",
+    );
+  });
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexFeishuBridge.refresh", async () => {
+      await services.store.refresh();
+      void vscode.window.showInformationMessage("Codex bridge tasks refreshed.");
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.login", async () => {
+      const result = await services.client.login();
+      if (result.authUrl) {
+        await vscode.env.openExternal(vscode.Uri.parse(result.authUrl));
+        void vscode.window.showInformationMessage("Opened ChatGPT login in your browser.");
+      } else {
+        void vscode.window.showInformationMessage("Bridge login request started.");
+      }
+      await services.store.refresh();
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.newTask", async () => {
+      const title = await vscode.window.showInputBox({
+        title: "Create a Codex bridge task",
+        placeHolder: "Task title",
+      });
+      if (!title?.trim()) {
+        return;
+      }
+
+      const prompt = await vscode.window.showInputBox({
+        title: `Initial prompt for ${title}`,
+        placeHolder: "Optional prompt to send immediately",
+      });
+
+      await services.client.createTask({
+        title,
+        prompt: prompt ?? "",
+      });
+      await services.store.refresh();
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.resumeTask", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+        (await pickTask(services.store, "Select a task to resume"));
+      if (!task) {
+        return;
+      }
+
+      await services.client.resumeTask(task.taskId);
+      await services.store.refresh();
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.importThreads", async () => {
+      const threadId = await vscode.window.showInputBox({
+        title: "Import Codex threads",
+        placeHolder: "Leave empty to import every visible thread",
+      });
+      await services.client.importThreads(threadId?.trim() || undefined);
+      await services.store.refresh();
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.sendMessage", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+        (await pickTask(services.store, "Select a task to message"));
+      if (!task) {
+        return;
+      }
+
+      await withTaskMessage(services, task);
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.interruptTask", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+        (await pickTask(services.store, "Select a running task to interrupt", (candidate) => candidate.activeTurnId !== undefined));
+      if (!task) {
+        return;
+      }
+
+      await services.client.interruptTask(task.taskId);
+      await services.store.refresh();
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.approveCommand", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      await approveByKind(services, taskOrItem, "command");
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.approveFileChange", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      await approveByKind(services, taskOrItem, "file-change");
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.retryTurn", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+        (await pickTask(services.store, "Select a task to retry"));
+      if (!task) {
+        return;
+      }
+
+      await withTaskMessage(services, task, {
+        title: `Retry ${task.title}`,
+        initialValue: "Retry the last turn, keep the existing context, and continue.",
+        placeholder: "Optional retry instructions",
+      });
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.openDiff", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+        (await pickTask(services.store, "Select a task with diff output", (candidate) => candidate.diffs.length > 0));
+      if (!task) {
+        return;
+      }
+      if (task.diffs.length === 0) {
+        void vscode.window.showInformationMessage(`No diff data is available for ${task.title}.`);
+        return;
+      }
+
+      const selectedDiff =
+        task.diffs.length === 1
+          ? task.diffs[0]
+          : (
+              await vscode.window.showQuickPick(
+                task.diffs.map((diff) => ({
+                  label: diff.path,
+                  description: diff.summary,
+                  diff,
+                })),
+                { placeHolder: "Select a diff to open" },
+              )
+            )?.diff;
+      if (!selectedDiff) {
+        return;
+      }
+
+      const document = await vscode.workspace.openTextDocument({
+        content: selectedDiff.patch ?? `# ${selectedDiff.path}\n\n${selectedDiff.summary}`,
+        language: "diff",
+      });
+      await vscode.window.showTextDocument(document, { preview: false });
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.openTaskDetails", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+      const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
+        (await pickTask(services.store, "Select a task to inspect"));
+      if (!task) {
+        return;
+      }
+
+      const freshTask = await services.client.getTask(task.taskId);
+      openTaskDetailPanel(freshTask);
+    }),
+    vscode.commands.registerCommand("codexFeishuBridge.openStatus", async () => {
+      await services.store.refresh();
+      const snapshot = services.store.getSnapshot();
+      openStatusPanel({
+        account: snapshot.account,
+        rateLimits: snapshot.rateLimits,
+        connection: snapshot.connection,
+        taskCount: snapshot.tasks.length,
+      });
+    }),
+  );
+}
+
+export function deactivate(): void {
+  // VSCode disposes registered subscriptions automatically.
+}
