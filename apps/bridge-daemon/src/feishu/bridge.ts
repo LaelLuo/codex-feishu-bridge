@@ -96,6 +96,8 @@ export class FeishuBridge {
     return Boolean(
       this.options.config.feishuAppId &&
         this.options.config.feishuAppSecret &&
+        this.options.config.feishuVerificationToken &&
+        this.options.config.feishuEncryptKey &&
         this.options.config.feishuDefaultChatId,
     );
   }
