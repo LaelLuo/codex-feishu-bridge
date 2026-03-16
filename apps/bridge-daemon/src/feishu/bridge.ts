@@ -37,6 +37,36 @@ interface PersistedFeishuState {
   processedEventIds: string[];
 }
 
+type LongConnectionHandle = {
+  stop: () => Promise<void>;
+};
+
+type LongConnectionFactory = (params: {
+  onMessage: (
+    message?:
+      | {
+          message_id?: string;
+          root_id?: string;
+          parent_id?: string;
+          chat_id?: string;
+          message_type?: string;
+          content?: string;
+        }
+      | undefined,
+    sender?:
+      | {
+          sender_id?: {
+            open_id?: string;
+            union_id?: string;
+            user_id?: string;
+          };
+        }
+      | undefined,
+  ) => Promise<void>;
+  config: BridgeConfig;
+  logger: Logger;
+}) => Promise<LongConnectionHandle>;
+
 function createSummary(task: ReturnType<BridgeService["getTask"]>, event: BridgeServiceEvent["event"]): string {
   if (!task) {
     return `Bridge event ${event.kind} was received, but the task snapshot is no longer available.`;
@@ -81,24 +111,41 @@ export class FeishuBridge {
   private tenantAccessToken?: string;
   private tenantAccessTokenExpiresAt = 0;
   private subscribed = false;
+  private longConnectionHandle: LongConnectionHandle | null = null;
+  private readonly longConnectionFactory?: LongConnectionFactory;
 
   constructor(
     private readonly options: {
       config: BridgeConfig;
       logger: Logger;
       service: BridgeService;
+      longConnectionFactory?: LongConnectionFactory;
     },
   ) {
     this.stateFile = path.join(options.config.stateDir, "feishu-events.json");
+    this.longConnectionFactory = options.longConnectionFactory;
   }
 
   get enabled(): boolean {
+    return this.hasLongConnectionConfig() || this.webhookEnabled;
+  }
+
+  get webhookEnabled(): boolean {
+    return (
+      Boolean(this.options.config.feishuAppId) &&
+      Boolean(this.options.config.feishuAppSecret) &&
+      Boolean(this.options.config.feishuVerificationToken) &&
+      Boolean(this.options.config.feishuEncryptKey) &&
+      Boolean(this.options.config.feishuDefaultChatId)
+    );
+  }
+
+  private hasLongConnectionConfig(): boolean {
     return Boolean(
       this.options.config.feishuAppId &&
         this.options.config.feishuAppSecret &&
-        this.options.config.feishuVerificationToken &&
-        this.options.config.feishuEncryptKey &&
-        this.options.config.feishuDefaultChatId,
+        this.options.config.feishuDefaultChatId &&
+        this.longConnectionFactory,
     );
   }
 
@@ -120,12 +167,16 @@ export class FeishuBridge {
       });
     });
     this.subscribed = true;
+
+    await this.startLongConnection();
   }
 
   dispose(): void {
     this.serviceUnsubscribe?.();
     this.serviceUnsubscribe = null;
     this.subscribed = false;
+    void this.longConnectionHandle?.stop();
+    this.longConnectionHandle = null;
   }
 
   async handleWebhook(rawBody: string, headers: FeishuWebhookHeaders): Promise<FeishuWebhookResult> {
@@ -323,6 +374,39 @@ export class FeishuBridge {
           content: text || `Message from ${actorId}`,
         });
         break;
+    }
+  }
+
+  private async startLongConnection(): Promise<void> {
+    if (!this.hasLongConnectionConfig()) {
+      return;
+    }
+
+    if (this.longConnectionHandle) {
+      return;
+    }
+
+    try {
+      this.longConnectionHandle = await this.longConnectionFactory!({
+        config: this.options.config,
+        logger: this.options.logger,
+        onMessage: async (message, sender) => {
+          const dedupeId =
+            message?.message_id ?? message?.root_id ?? message?.parent_id ?? sender?.sender_id?.open_id;
+          if (dedupeId && this.processedEventIds.has(dedupeId)) {
+            return;
+          }
+
+          await this.handleIncomingMessage(message, sender);
+
+          if (dedupeId) {
+            this.processedEventIds.add(dedupeId);
+            await this.persistState();
+          }
+        },
+      });
+    } catch (error) {
+      this.options.logger.warn("failed to start feishu long connection", error);
     }
   }
 

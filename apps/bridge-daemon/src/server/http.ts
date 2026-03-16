@@ -152,8 +152,8 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
       }
 
       if (request.method === "POST" && url.pathname === "/feishu/webhook") {
-        if (!feishu?.enabled) {
-          sendJson(response, 503, { error: "feishu bridge is not configured" });
+        if (!feishu?.webhookEnabled) {
+          sendJson(response, 503, { error: "feishu webhook is not configured" });
           return;
         }
 
