@@ -174,6 +174,8 @@ describe("feishu bridge", () => {
       }).then((result) => result.json());
       assert.equal(deduped.deduped, true);
 
+      await delay(100);
+      feishu.dispose();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {

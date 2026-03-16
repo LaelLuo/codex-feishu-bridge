@@ -184,6 +184,7 @@ export class BridgeService {
   private account: CodexAccountSnapshot | null = null;
   private rateLimits: CodexRateLimitSnapshot | null = null;
   private unsubscribeRuntime: (() => void) | null = null;
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly options: {
@@ -210,6 +211,7 @@ export class BridgeService {
       void this.handleRuntimeNotification(notification);
     });
 
+    await this.reconcilePersistedTasks();
     await this.refreshAccountState();
     this.emitEvent(SYSTEM_TASK_ID, "daemon.ready", {
       tasks: this.listTasks(),
@@ -735,6 +737,63 @@ export class BridgeService {
     }
   }
 
+  private async reconcilePersistedTasks(): Promise<void> {
+    try {
+      const runtimeThreads = await this.options.runtime.listThreads();
+      const runtimeThreadsById = new Map(runtimeThreads.map((thread) => [thread.id, thread]));
+      let changed = false;
+
+      for (const task of this.tasks.values()) {
+        const runtimeThread = runtimeThreadsById.get(task.threadId);
+        if (!runtimeThread) {
+          if (task.activeTurnId) {
+            task.activeTurnId = undefined;
+            changed = true;
+          }
+          changed = this.expirePendingApprovals(task) || changed;
+          continue;
+        }
+
+        task.title = runtimeThread.name ?? task.title;
+        task.workspaceRoot = runtimeThread.cwd ?? task.workspaceRoot;
+        const runtimeStatus = mapRuntimeStatus(runtimeThread.status);
+        if (task.status !== runtimeStatus) {
+          task.status = runtimeStatus;
+          changed = true;
+        }
+        if (runtimeStatus === "idle" || runtimeStatus === "completed" || runtimeStatus === "failed" || runtimeStatus === "interrupted") {
+          if (task.activeTurnId) {
+            task.activeTurnId = undefined;
+            changed = true;
+          }
+          changed = this.expirePendingApprovals(task) || changed;
+        }
+        this.touchTask(task, runtimeThread.updatedAt ?? task.updatedAt);
+      }
+
+      if (changed) {
+        await this.persistState();
+      }
+    } catch (error) {
+      this.options.logger.warn("failed to reconcile persisted tasks", error);
+    }
+  }
+
+  private expirePendingApprovals(task: BridgeTask): boolean {
+    let changed = false;
+    for (const approval of task.pendingApprovals) {
+      if (approval.state !== "pending") {
+        continue;
+      }
+
+      approval.state = "expired";
+      approval.resolvedAt = new Date().toISOString();
+      changed = true;
+    }
+
+    return changed;
+  }
+
   private requireTask(taskId: string): BridgeTask {
     const task = this.tasks.get(taskId);
     if (!task) {
@@ -749,10 +808,13 @@ export class BridgeService {
   }
 
   private async persistState(): Promise<void> {
-    await writeJsonFile(this.stateFile, {
+    const snapshot = {
       seq: this.seq,
       tasks: [...this.tasks.values()],
-    } satisfies PersistedState);
+    } satisfies PersistedState;
+
+    this.persistChain = this.persistChain.catch(() => undefined).then(() => writeJsonFile(this.stateFile, snapshot));
+    await this.persistChain;
   }
 
   private emitEvent(taskId: string, kind: BridgeEvent["kind"], payload: unknown): void {
