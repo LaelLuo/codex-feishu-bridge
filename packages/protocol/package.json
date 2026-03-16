@@ -1,0 +1,20 @@
+{
+  "name": "@codex-feishu-bridge/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared event and message contracts for the Codex and Feishu bridge project.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "node -e \"console.log('lint placeholder: protocol')\"",
+    "test": "tsx --test tests/*.test.ts"
+  }
+}

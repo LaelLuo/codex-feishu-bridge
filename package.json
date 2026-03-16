@@ -1,0 +1,32 @@
+{
+  "name": "codex-feishu-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Docker-first monorepo for the Codex and Feishu bridge project.",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "compose:config": "docker compose -f docker/compose.yaml --env-file docker/.env.example config",
+    "dev:up": "docker compose -f docker/compose.yaml --env-file docker/.env.example up -d workspace-dev",
+    "dev:shell": "docker compose -f docker/compose.yaml --env-file docker/.env.example exec workspace-dev bash",
+    "runtime:up": "docker compose -f docker/compose.yaml --env-file docker/.env.example up -d bridge-runtime",
+    "runtime:shell": "docker compose -f docker/compose.yaml --env-file docker/.env.example exec bridge-runtime bash",
+    "build:protocol": "npm run build -w @codex-feishu-bridge/protocol",
+    "test:protocol": "npm run test -w @codex-feishu-bridge/protocol",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
