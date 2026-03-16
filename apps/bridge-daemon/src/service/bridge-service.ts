@@ -39,6 +39,8 @@ import type {
 } from "../runtime";
 
 const SYSTEM_TASK_ID = "system";
+const ACTIVE_TURN_START_TIMEOUT_MS = 8_000;
+const ACTIVE_TURN_RETRY_INTERVAL_MS = 250;
 
 interface PersistedState {
   seq: number;
@@ -78,6 +80,11 @@ export interface UploadImageResult {
 export interface BridgeServiceEvent {
   event: BridgeEvent;
   snapshot: BridgeServiceSnapshot;
+}
+
+interface PendingTurnStart {
+  promise: Promise<void>;
+  resolve: () => void;
 }
 
 function cloneTask(task: BridgeTask): BridgeTask {
@@ -196,6 +203,8 @@ function conversationContentFromInput(input: CodexInputItem[]): { content: strin
 export class BridgeService {
   private readonly emitter = new EventEmitter();
   private readonly tasks = new Map<string, BridgeTask>();
+  private readonly pendingTurnStarts = new Map<string, PendingTurnStart>();
+  private readonly startedTurns = new Set<string>();
   private readonly stateFile: string;
   private seq = 0;
   private account: CodexAccountSnapshot | null = null;
@@ -328,11 +337,7 @@ export class BridgeService {
     const input = this.buildInputItems(task, request);
 
     if (task.activeTurnId && task.status === "running") {
-      await this.options.runtime.steerTurn({
-        threadId: task.threadId,
-        turnId: task.activeTurnId,
-        input,
-      });
+      await this.steerActiveTurn(task.threadId, task.activeTurnId, input);
       this.emitEvent(task.taskId, "task.steered", {
         taskId: task.taskId,
         turnId: task.activeTurnId,
@@ -342,6 +347,7 @@ export class BridgeService {
         threadId: task.threadId,
         input,
       });
+      this.trackPendingTurnStart(turn.id);
       task.activeTurnId = task.activeTurnId ?? turn.id;
       if (task.status === "idle" || task.status === "queued" || task.status === "completed") {
         task.status = "running";
@@ -362,10 +368,8 @@ export class BridgeService {
     if (!task.activeTurnId) {
       throw new Error(`Task ${taskId} has no active turn to interrupt.`);
     }
-    await this.options.runtime.interruptTurn({
-      threadId: task.threadId,
-      turnId: task.activeTurnId,
-    });
+    await this.interruptActiveTurn(task.threadId, task.activeTurnId);
+    this.clearTurnTracking(task.activeTurnId);
 
     task.status = "interrupted";
     task.activeTurnId = undefined;
@@ -502,6 +506,9 @@ export class BridgeService {
           return;
         }
         task.status = mapRuntimeStatus(params.status);
+        if (task.status !== "running") {
+          this.clearTurnTracking(task.activeTurnId);
+        }
         this.touchTask(task);
         await this.persistState();
         this.emitEvent(task.taskId, "task.updated", {
@@ -519,6 +526,10 @@ export class BridgeService {
         if (!task) {
           return;
         }
+        if (task.activeTurnId && task.activeTurnId !== turn.id) {
+          this.clearTurnTracking(task.activeTurnId);
+        }
+        this.markTurnStarted(turn.id);
         task.activeTurnId = turn.id;
         task.status = "running";
         this.touchTask(task);
@@ -538,6 +549,7 @@ export class BridgeService {
         if (!task) {
           return;
         }
+        this.clearTurnTracking(turn.id);
         task.activeTurnId = undefined;
         task.status = mapTurnStatus(turn.status);
         if (turn.error?.message) {
@@ -767,6 +779,7 @@ export class BridgeService {
         const runtimeThread = runtimeThreadsById.get(task.threadId);
         if (!runtimeThread) {
           if (task.activeTurnId) {
+            this.clearTurnTracking(task.activeTurnId);
             task.activeTurnId = undefined;
             changed = true;
           }
@@ -783,6 +796,7 @@ export class BridgeService {
         }
         if (runtimeStatus === "idle" || runtimeStatus === "completed" || runtimeStatus === "failed" || runtimeStatus === "interrupted") {
           if (task.activeTurnId) {
+            this.clearTurnTracking(task.activeTurnId);
             task.activeTurnId = undefined;
             changed = true;
           }
@@ -821,6 +835,110 @@ export class BridgeService {
     }
 
     return task;
+  }
+
+  private trackPendingTurnStart(turnId: string): void {
+    this.startedTurns.delete(turnId);
+    if (this.pendingTurnStarts.has(turnId)) {
+      return;
+    }
+
+    let resolve: (() => void) | undefined;
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
+
+    this.pendingTurnStarts.set(turnId, {
+      promise,
+      resolve: resolve ?? (() => undefined),
+    });
+  }
+
+  private markTurnStarted(turnId: string): void {
+    this.startedTurns.add(turnId);
+    const pending = this.pendingTurnStarts.get(turnId);
+    if (!pending) {
+      return;
+    }
+
+    pending.resolve();
+    this.pendingTurnStarts.delete(turnId);
+  }
+
+  private clearTurnTracking(turnId: string | undefined): void {
+    if (!turnId) {
+      return;
+    }
+
+    this.startedTurns.delete(turnId);
+    const pending = this.pendingTurnStarts.get(turnId);
+    if (!pending) {
+      return;
+    }
+
+    pending.resolve();
+    this.pendingTurnStarts.delete(turnId);
+  }
+
+  private async steerActiveTurn(threadId: string, turnId: string, input: CodexInputItem[]): Promise<void> {
+    const deadline = Date.now() + ACTIVE_TURN_START_TIMEOUT_MS;
+
+    for (;;) {
+      try {
+        await this.options.runtime.steerTurn({
+          threadId,
+          turnId,
+          input,
+        });
+        return;
+      } catch (error) {
+        if (!this.isTurnStillStartingError(error) || Date.now() >= deadline) {
+          throw error;
+        }
+
+        await this.waitForTurnStartSignal(turnId, deadline - Date.now());
+      }
+    }
+  }
+
+  private isTurnStillStartingError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes("no active turn");
+  }
+
+  private async waitForTurnStartSignal(turnId: string, remainingMs: number): Promise<void> {
+    if (this.startedTurns.has(turnId) || remainingMs <= 0) {
+      return;
+    }
+
+    const pending = this.pendingTurnStarts.get(turnId);
+    const delayMs = Math.min(ACTIVE_TURN_RETRY_INTERVAL_MS, remainingMs);
+
+    await Promise.race([
+      pending?.promise ?? Promise.resolve(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      }),
+    ]);
+  }
+
+  private async interruptActiveTurn(threadId: string, turnId: string): Promise<void> {
+    const deadline = Date.now() + ACTIVE_TURN_START_TIMEOUT_MS;
+
+    for (;;) {
+      try {
+        await this.options.runtime.interruptTurn({
+          threadId,
+          turnId,
+        });
+        return;
+      } catch (error) {
+        if (!this.isTurnStillStartingError(error) || Date.now() >= deadline) {
+          throw error;
+        }
+
+        await this.waitForTurnStartSignal(turnId, deadline - Date.now());
+      }
+    }
   }
 
   private touchTask(task: BridgeTask, timestamp = new Date().toISOString()): void {
