@@ -15,6 +15,7 @@ import { BridgeService } from "../src/service/bridge-service";
 interface FeishuTestHarness {
   baseUrl: string;
   calls: string[];
+  requests: Array<{ method: string; url: string; body?: string }>;
   cleanup: () => Promise<void>;
   runtime: ReturnType<typeof createCodexRuntime>;
   service: BridgeService;
@@ -103,10 +104,19 @@ async function createHarness(
   await prepareBridgeDirectories(config);
 
   const calls: string[] = [];
+  const requests: Array<{ method: string; url: string; body?: string }> = [];
   const originalFetch = global.fetch;
   global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    calls.push(`${init?.method ?? "GET"} ${url}`);
+    const method = init?.method ?? "GET";
+    const body =
+      typeof init?.body === "string"
+        ? init.body
+        : init?.body === undefined || init?.body === null
+          ? undefined
+          : String(init.body);
+    calls.push(`${method} ${url}`);
+    requests.push({ method, url, body });
 
     if (!url.startsWith("https://open.feishu.cn")) {
       return originalFetch(input, init);
@@ -171,6 +181,7 @@ async function createHarness(
     return {
       baseUrl,
       calls,
+      requests,
       runtime,
       service,
       cleanup: async () => {
@@ -328,6 +339,42 @@ describe("feishu bridge", { concurrency: 1 }, () => {
         },
       );
       assert.equal(deduped.body.deduped, true);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("creates one root thread and keeps startup follow-ups in the same feishu thread", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Feishu thread stability task",
+        prompt: "Reply with a short acknowledgement.",
+      });
+
+      const rootMessageId = await waitForRootMessageId(harness.service, task.taskId);
+      await waitFor(
+        () =>
+          harness.requests.some((request) =>
+            request.url.includes(`/open-apis/im/v1/messages/${rootMessageId}/reply`),
+          ),
+        `task ${task.taskId} in-thread reply`,
+      );
+
+      const rootRequests = harness.requests.filter((request) =>
+        request.url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id"),
+      );
+      assert.equal(rootRequests.length, 1);
+
+      const replyRequests = harness.requests.filter((request) =>
+        request.url.includes(`/open-apis/im/v1/messages/${rootMessageId}/reply`),
+      );
+      assert.ok(replyRequests.length >= 1);
+      for (const request of replyRequests) {
+        const body = JSON.parse(request.body ?? "{}") as { reply_in_thread?: boolean };
+        assert.equal(body.reply_in_thread, true);
+      }
     } finally {
       await harness.cleanup();
     }

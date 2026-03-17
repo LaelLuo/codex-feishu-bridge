@@ -65,6 +65,20 @@ export type LongConnectionFactory = (params: {
   logger: Logger;
 }) => Promise<LongConnectionHandle>;
 
+const FEISHU_SYNC_EVENT_KINDS = new Set<BridgeServiceEvent["event"]["kind"]>([
+  "task.created",
+  "task.resumed",
+  "task.failed",
+  "task.completed",
+  "task.interrupted",
+  "task.diff.updated",
+  "approval.requested",
+  "approval.resolved",
+  "task.image.added",
+  "task.message.sent",
+  "task.steered",
+]);
+
 function createSummary(task: ReturnType<BridgeService["getTask"]>, event: BridgeServiceEvent["event"]): string {
   if (!task) {
     return `Bridge event ${event.kind} was received, but the task snapshot is no longer available.`;
@@ -121,6 +135,7 @@ function summarizeIncomingMessage(
 export class FeishuBridge {
   private readonly stateFile: string;
   private readonly processedEventIds = new Set<string>();
+  private readonly pendingBindings = new Map<string, Promise<void>>();
   private serviceUnsubscribe: (() => void) | null = null;
   private tenantAccessToken?: string;
   private tenantAccessTokenExpiresAt = 0;
@@ -189,6 +204,7 @@ export class FeishuBridge {
     this.serviceUnsubscribe?.();
     this.serviceUnsubscribe = null;
     this.subscribed = false;
+    this.pendingBindings.clear();
     void this.longConnectionHandle?.stop();
     this.longConnectionHandle = null;
   }
@@ -271,21 +287,7 @@ export class FeishuBridge {
       return;
     }
 
-    if (
-      ![
-        "task.created",
-        "task.resumed",
-        "task.failed",
-        "task.interrupted",
-        "task.updated",
-        "task.diff.updated",
-        "approval.requested",
-        "approval.resolved",
-        "task.image.added",
-        "task.message.sent",
-        "task.steered",
-      ].includes(event.kind)
-    ) {
+    if (!FEISHU_SYNC_EVENT_KINDS.has(event.kind)) {
       return;
     }
 
@@ -294,24 +296,64 @@ export class FeishuBridge {
       return;
     }
 
-    if (!task.feishuBinding) {
-      const rootMessageId = await this.sendChatMessage(
-        this.options.config.feishuDefaultChatId!,
-        `Task created\n${createSummary(task, event)}`,
-      );
-      await this.options.service.bindFeishuThread(task.taskId, {
-        chatId: this.options.config.feishuDefaultChatId!,
-        threadKey: rootMessageId,
-        rootMessageId,
+    const bindingState = await this.ensureTaskBinding(task, event);
+    if (bindingState.created) {
+      return;
+    }
+
+    if (!bindingState.task.feishuBinding) {
+      return;
+    }
+
+    await this.replyToMessage(
+      bindingState.task.feishuBinding.rootMessageId ?? bindingState.task.feishuBinding.threadKey,
+      createSummary(bindingState.task, event),
+    );
+  }
+
+  private async ensureTaskBinding(
+    task: NonNullable<ReturnType<BridgeService["getTask"]>>,
+    event: BridgeServiceEvent["event"],
+  ): Promise<{ task: NonNullable<ReturnType<BridgeService["getTask"]>>; created: boolean }> {
+    if (task.feishuBinding) {
+      return { task, created: false };
+    }
+
+    const taskId = task.taskId;
+    let created = false;
+    let pending = this.pendingBindings.get(taskId);
+
+    if (!pending) {
+      created = true;
+      pending = (async () => {
+        const rootMessageId = await this.sendChatMessage(
+          this.options.config.feishuDefaultChatId!,
+          `Task created\n${createSummary(this.options.service.getTask(taskId), event)}`,
+        );
+        await this.options.service.bindFeishuThread(taskId, {
+          chatId: this.options.config.feishuDefaultChatId!,
+          threadKey: rootMessageId,
+          rootMessageId,
+        });
+      })();
+      this.pendingBindings.set(taskId, pending);
+      void pending.finally(() => {
+        if (this.pendingBindings.get(taskId) === pending) {
+          this.pendingBindings.delete(taskId);
+        }
       });
-      return;
     }
 
-    if (event.kind === "task.updated" && !(event.payload as { item?: { type?: string } })?.item?.type) {
-      return;
+    await pending;
+    const boundTask = this.options.service.getTask(taskId);
+    if (!boundTask?.feishuBinding) {
+      throw new Error(`Failed to bind Feishu thread for task ${taskId}`);
     }
 
-    await this.replyToMessage(task.feishuBinding.rootMessageId ?? task.feishuBinding.threadKey, createSummary(task, event));
+    return {
+      task: boundTask,
+      created,
+    };
   }
 
   private async handleIncomingMessage(
@@ -479,6 +521,7 @@ export class FeishuBridge {
         method: "POST",
         body: JSON.stringify({
           msg_type: "text",
+          reply_in_thread: true,
           content: JSON.stringify({ text }),
         }),
       },
