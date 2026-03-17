@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import path from "node:path";
 
+import type { FeishuThreadBinding } from "@codex-feishu-bridge/protocol";
 import { readJsonFile, writeJsonFile, type BridgeConfig, type Logger } from "@codex-feishu-bridge/shared";
 
 import { BridgeService, type BridgeServiceEvent } from "../service/bridge-service";
@@ -110,9 +111,35 @@ function parseTextContent(rawContent: string | undefined): string {
 
 function normalizeCommand(text: string): { command: string; args: string[] } {
   const tokens = text.trim().split(/\s+/).filter(Boolean);
+  const rawCommand = tokens[0] ?? "";
   return {
-    command: tokens[0]?.toLowerCase() ?? "",
+    command: rawCommand.startsWith("/") ? rawCommand.slice(1).toLowerCase() : rawCommand.toLowerCase(),
     args: tokens.slice(1),
+  };
+}
+
+function collectLookupIds(message: FeishuIncomingMessage): string[] {
+  const ids = [message.thread_id, message.root_id, message.parent_id, message.message_id].filter(
+    (value): value is string => Boolean(value),
+  );
+  return [...new Set(ids)];
+}
+
+function buildBindingFromMessage(message: FeishuIncomingMessage): FeishuThreadBinding | null {
+  if (!message.chat_id) {
+    return null;
+  }
+
+  const threadKey = message.thread_id ?? message.root_id ?? message.parent_id ?? message.message_id;
+  const rootMessageId = message.root_id ?? message.parent_id ?? message.message_id;
+  if (!threadKey || !rootMessageId) {
+    return null;
+  }
+
+  return {
+    chatId: message.chat_id,
+    threadKey,
+    rootMessageId,
   };
 }
 
@@ -319,6 +346,10 @@ export class FeishuBridge {
       return { task, created: false };
     }
 
+    if (task.feishuBindingDisabled) {
+      return { task, created: false };
+    }
+
     const taskId = task.taskId;
     let created = false;
     let pending = this.pendingBindings.get(taskId);
@@ -375,30 +406,100 @@ export class FeishuBridge {
       return;
     }
 
-    const lookupId = message.root_id ?? message.parent_id ?? message.thread_id ?? message.message_id;
+    const lookupIds = collectLookupIds(message);
+    const lookupId = lookupIds[0];
     if (!lookupId) {
       this.options.logger.info("ignoring feishu incoming text without lookup id", summary);
-      return;
-    }
-
-    const task = this.options
-      .service
-      .listTasks()
-      .find((candidate) => candidate.feishuBinding?.rootMessageId === lookupId || candidate.feishuBinding?.threadKey === lookupId);
-    if (!task) {
-      this.options.logger.info("no feishu task binding matched incoming message", {
-        ...summary,
-        lookupId,
-      });
       return;
     }
 
     const actorId = sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? sender?.sender_id?.union_id ?? "unknown";
     const text = parseTextContent(message.content);
     const { command, args } = normalizeCommand(text);
+    const replyTargetId = message.message_id ?? message.root_id ?? message.parent_id ?? message.thread_id ?? lookupId;
+    const currentBinding = buildBindingFromMessage(message);
+    let task = this.options.service.findTaskByFeishuBinding(message.chat_id, lookupIds);
+
+    if (command === "status") {
+      if (!task) {
+        await this.replyToMessage(replyTargetId, "This Feishu thread is currently unbound. Use /bind <taskId> to attach it to an existing task.");
+        return;
+      }
+
+      const binding = task.feishuBinding;
+      await this.replyToMessage(
+        replyTargetId,
+        [
+          `Thread status: bound`,
+          `taskId: ${task.taskId}`,
+          `title: ${task.title}`,
+          `status: ${task.status}`,
+          binding ? `threadKey: ${binding.threadKey}` : undefined,
+          binding?.rootMessageId ? `rootMessageId: ${binding.rootMessageId}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+      return;
+    }
+
+    if (command === "bind") {
+      if (!currentBinding) {
+        await this.replyToMessage(replyTargetId, "This message cannot be bound because the current Feishu thread identifiers are incomplete.");
+        return;
+      }
+
+      const targetTaskId = args[0];
+      if (!targetTaskId) {
+        if (task) {
+          await this.replyToMessage(replyTargetId, `This thread is already bound to ${task.taskId}. Use /unbind to detach it or /bind <taskId> to rebind.`);
+        } else {
+          await this.replyToMessage(replyTargetId, "Usage: /bind <taskId>");
+        }
+        return;
+      }
+
+      const targetTask = this.options.service.getTask(targetTaskId);
+      if (!targetTask) {
+        await this.replyToMessage(replyTargetId, `Unknown task: ${targetTaskId}`);
+        return;
+      }
+
+      if (task && task.taskId !== targetTaskId) {
+        await this.options.service.unbindFeishuThread(task.taskId);
+      }
+
+      task = await this.options.service.bindFeishuThread(targetTaskId, currentBinding);
+      await this.replyToMessage(
+        replyTargetId,
+        `Bound this Feishu thread to task ${task.taskId} (${task.title}). Use /status to inspect or /unbind to detach.`,
+      );
+      return;
+    }
+
+    if (command === "unbind") {
+      if (!task) {
+        await this.replyToMessage(replyTargetId, "This Feishu thread is already unbound.");
+        return;
+      }
+
+      const unboundTaskId = task.taskId;
+      await this.options.service.unbindFeishuThread(task.taskId);
+      await this.replyToMessage(replyTargetId, `Unbound this Feishu thread from task ${unboundTaskId}. Use /bind <taskId> to attach it again.`);
+      return;
+    }
+
+    if (!task) {
+      this.options.logger.info("no feishu task binding matched incoming message", {
+        ...summary,
+        lookupIds,
+      });
+      return;
+    }
+
     this.options.logger.info("routing feishu incoming message", {
       ...summary,
-      lookupId,
+      lookupIds,
       taskId: task.taskId,
       command: command || "message",
     });
@@ -424,7 +525,7 @@ export class FeishuBridge {
           await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
         } else {
           await this.replyToMessage(
-            task.feishuBinding?.rootMessageId ?? lookupId,
+            task.feishuBinding?.rootMessageId ?? replyTargetId,
             `No pending approval was found for ${task.title}.`,
           );
         }

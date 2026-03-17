@@ -392,6 +392,31 @@ export class BridgeService {
     return task ? cloneTask(task) : null;
   }
 
+  findTaskByFeishuBinding(chatId: string | undefined, lookupIds: string[]): BridgeTask | null {
+    if (lookupIds.length === 0) {
+      return null;
+    }
+
+    for (const task of this.tasks.values()) {
+      if (!task.feishuBinding) {
+        continue;
+      }
+      if (chatId && task.feishuBinding.chatId !== chatId) {
+        continue;
+      }
+      if (
+        lookupIds.some(
+          (lookupId) =>
+            lookupId === task.feishuBinding?.threadKey || lookupId === task.feishuBinding?.rootMessageId,
+        )
+      ) {
+        return cloneTask(task);
+      }
+    }
+
+    return null;
+  }
+
   async createTask(request: CreateTaskRequest): Promise<BridgeTask> {
     const workspaceRoot = resolveWorkspacePath(
       this.options.config.workspaceRoot,
@@ -529,11 +554,25 @@ export class BridgeService {
   async bindFeishuThread(taskId: string, binding: FeishuThreadBinding): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
     task.feishuBinding = binding;
+    task.feishuBindingDisabled = false;
     this.touchTask(task);
     await this.persistState();
     this.emitEvent(task.taskId, "feishu.thread.bound", {
       taskId,
       binding,
+    });
+    return cloneTask(task);
+  }
+
+  async unbindFeishuThread(taskId: string): Promise<BridgeTask> {
+    const task = this.requireTask(taskId);
+    delete task.feishuBinding;
+    task.feishuBindingDisabled = true;
+    this.touchTask(task);
+    await this.persistState();
+    this.emitEvent(task.taskId, "task.updated", {
+      task: cloneTask(task),
+      feishuUnbound: true,
     });
     return cloneTask(task);
   }

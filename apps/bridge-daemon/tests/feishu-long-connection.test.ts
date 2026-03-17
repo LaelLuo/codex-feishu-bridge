@@ -278,4 +278,221 @@ describe("feishu long connection ingress", () => {
       global.fetch = originalFetch;
     }
   });
+
+  it("supports slash bind, status, and unbind commands for the current Feishu thread", async () => {
+    const namespace = randomUUID();
+    const workspaceRoot = process.cwd();
+    const config = loadBridgeConfig(
+      {
+        WORKSPACE_PATH: workspaceRoot,
+        BRIDGE_STATE_DIR: path.join(".tmp", namespace, "state"),
+        CODEX_HOME: path.join(".tmp", namespace, "codex-home"),
+        BRIDGE_UPLOADS_DIR: path.join(".tmp", namespace, "uploads"),
+        CODEX_RUNTIME_BACKEND: "mock",
+        FEISHU_BASE_URL: "https://open.feishu.cn",
+        FEISHU_APP_ID: "cli-app-id",
+        FEISHU_APP_SECRET: "cli-app-secret",
+        FEISHU_DEFAULT_CHAT_ID: "oc_chat_id",
+        FEISHU_VERIFICATION_TOKEN: "",
+        FEISHU_ENCRYPT_KEY: "",
+      },
+      workspaceRoot,
+    );
+    const logger = createConsoleLogger("feishu-long-connection-bind-command-test");
+
+    await prepareBridgeDirectories(config);
+
+    const calls: string[] = [];
+    const requests: Array<{ method: string; url: string; body?: string }> = [];
+    const originalFetch = global.fetch;
+    global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? "GET";
+      const body =
+        typeof init?.body === "string"
+          ? init.body
+          : init?.body === undefined || init?.body === null
+            ? undefined
+            : String(init.body);
+      calls.push(`${method} ${url}`);
+      requests.push({ method, url, body });
+
+      if (!url.startsWith("https://open.feishu.cn")) {
+        return originalFetch(input, init);
+      }
+
+      if (url.endsWith("/open-apis/auth/v3/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+        });
+      }
+
+      if (url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")) {
+        return new Response(JSON.stringify({ code: 0, data: { message_id: `om_root_${calls.length}` } }), {
+          status: 200,
+        });
+      }
+
+      if (url.includes("/open-apis/im/v1/messages/")) {
+        return new Response(JSON.stringify({ code: 0, data: { message_id: `om_reply_${calls.length}` } }), {
+          status: 200,
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    let onMessage: ((message?: any, sender?: any) => Promise<void>) | null = null;
+
+    const longConnectionFactory = async (params: { onMessage: (message?: any, sender?: any) => Promise<void> }) => {
+      onMessage = params.onMessage;
+      return {
+        stop: async () => {},
+      };
+    };
+
+    try {
+      const runtime = createCodexRuntime(config, logger);
+      await runtime.start();
+
+      const service = new BridgeService({ config, logger, runtime });
+      await service.initialize();
+
+      const feishu = new FeishuBridge({ config, logger, service, longConnectionFactory });
+      await feishu.initialize();
+
+      const task = await service.createTask({
+        title: "Long connection bind command task",
+      });
+
+      await waitFor(() => Boolean(service.getTask(task.taskId)?.feishuBinding?.rootMessageId), "initial feishu binding");
+      await service.unbindFeishuThread(task.taskId);
+
+      assert.ok(onMessage, "long connection handler should be registered");
+      assert.equal(service.getTask(task.taskId)?.feishuBinding, undefined);
+      assert.equal(service.getTask(task.taskId)?.feishuBindingDisabled, true);
+
+      const rootSendCountBefore = calls.filter((entry) => entry.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")).length;
+
+      await onMessage?.(
+        {
+          message_id: "om_status_unbound",
+          thread_id: "omt_current_thread",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/status" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_command",
+          },
+        },
+      );
+
+      await waitFor(
+        () => requests.some((request) => request.body?.includes("currently unbound")),
+        "unbound status reply",
+      );
+
+      await onMessage?.(
+        {
+          message_id: "om_bind_current",
+          thread_id: "omt_current_thread",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: `/bind ${task.taskId}` }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_command",
+          },
+        },
+      );
+
+      await waitFor(
+        () => service.getTask(task.taskId)?.feishuBinding?.threadKey === "omt_current_thread",
+        "manual thread binding",
+      );
+      assert.equal(service.getTask(task.taskId)?.feishuBinding?.rootMessageId, "om_bind_current");
+      assert.equal(service.getTask(task.taskId)?.feishuBindingDisabled, false);
+
+      const beforeConversationCount = service.getTask(task.taskId)?.conversation.length ?? 0;
+      await onMessage?.(
+        {
+          message_id: "om_bound_message",
+          thread_id: "omt_current_thread",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello after bind" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_command",
+          },
+        },
+      );
+
+      await waitFor(
+        () => (service.getTask(task.taskId)?.conversation.length ?? 0) > beforeConversationCount,
+        "bound thread message routing",
+      );
+      assert.ok(
+        service
+          .getTask(task.taskId)
+          ?.conversation.some((message) => message.author === "user" && message.content === "hello after bind"),
+      );
+
+      await onMessage?.(
+        {
+          message_id: "om_status_bound",
+          thread_id: "omt_current_thread",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/status" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_command",
+          },
+        },
+      );
+
+      await waitFor(
+        () => requests.some((request) => request.body?.includes(`taskId: ${task.taskId}`)),
+        "bound status reply",
+      );
+
+      await onMessage?.(
+        {
+          message_id: "om_unbind_current",
+          thread_id: "omt_current_thread",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/unbind" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_command",
+          },
+        },
+      );
+
+      await waitFor(() => service.getTask(task.taskId)?.feishuBinding === undefined, "thread unbind");
+      assert.equal(service.getTask(task.taskId)?.feishuBindingDisabled, true);
+
+      await service.sendMessage(task.taskId, {
+        content: "local follow-up after unbind",
+      });
+      await delay(50);
+
+      const rootSendCountAfter = calls.filter((entry) => entry.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")).length;
+      assert.equal(rootSendCountAfter, rootSendCountBefore);
+
+      await feishu.dispose();
+      await service.dispose();
+      await runtime.dispose();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

@@ -93,6 +93,7 @@ export interface BridgeTask {
   activeTurnId?: string;
   latestSummary?: string;
   feishuBinding?: FeishuThreadBinding;
+  feishuBindingDisabled?: boolean;
   pendingApprovals: QueuedApproval[];
   diffs: TaskDiffEntry[];
   imageAssets: ImageAsset[];
@@ -134,6 +135,7 @@ export function createBridgeTask(seed: BridgeTaskSeed): BridgeTask {
     title: seed.title,
     workspaceRoot: seed.workspaceRoot,
     status: "idle",
+    feishuBindingDisabled: false,
     pendingApprovals: [],
     diffs: [],
     imageAssets: [],
