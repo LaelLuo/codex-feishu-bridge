@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import path from "node:path";
 
-import type { FeishuThreadBinding } from "@codex-feishu-bridge/protocol";
+import type { BridgeTask, FeishuThreadBinding } from "@codex-feishu-bridge/protocol";
 import { readJsonFile, writeJsonFile, type BridgeConfig, type Logger } from "@codex-feishu-bridge/shared";
 
 import { BridgeService, type BridgeServiceEvent } from "../service/bridge-service";
@@ -76,8 +76,25 @@ const FEISHU_SYNC_EVENT_KINDS = new Set<BridgeServiceEvent["event"]["kind"]>([
   "approval.requested",
   "approval.resolved",
   "task.image.added",
-  "task.message.sent",
-  "task.steered",
+]);
+const FEISHU_TASK_LIST_LIMIT = 8;
+const FEISHU_REPLY_MAX_CHARS = 3500;
+const FEISHU_SYNCED_AGENT_MESSAGE_LIMIT = 200;
+const FEISHU_KNOWN_COMMANDS = new Set([
+  "help",
+  "status",
+  "bind",
+  "unbind",
+  "tasks",
+  "task",
+  "health",
+  "account",
+  "limits",
+  "interrupt",
+  "retry",
+  "approve",
+  "decline",
+  "cancel",
 ]);
 
 function createSummary(task: ReturnType<BridgeService["getTask"]>, event: BridgeServiceEvent["event"]): string {
@@ -118,6 +135,10 @@ function normalizeCommand(text: string): { command: string; args: string[] } {
   };
 }
 
+function isSlashCommand(text: string): boolean {
+  return text.trim().startsWith("/");
+}
+
 function collectLookupIds(message: FeishuIncomingMessage): string[] {
   const ids = [message.thread_id, message.root_id, message.parent_id, message.message_id].filter(
     (value): value is string => Boolean(value),
@@ -141,6 +162,139 @@ function buildBindingFromMessage(message: FeishuIncomingMessage): FeishuThreadBi
     threadKey,
     rootMessageId,
   };
+}
+
+function formatTaskSummary(task: BridgeTask): string {
+  return [
+    `taskId: ${task.taskId}`,
+    `title: ${task.title}`,
+    `status: ${task.status}`,
+    `mode: ${task.mode}`,
+    `workspace: ${task.workspaceRoot}`,
+    `pendingApprovals: ${task.pendingApprovals.length}`,
+    `diffs: ${task.diffs.length}`,
+    `messages: ${task.conversation.length}`,
+    task.feishuBinding ? `threadKey: ${task.feishuBinding.threadKey}` : "threadKey: unbound",
+  ].join("\n");
+}
+
+function formatTaskList(tasks: BridgeTask[], currentTaskId?: string): string {
+  if (tasks.length === 0) {
+    return "No bridge tasks are currently available.";
+  }
+
+  const lines = tasks.slice(0, FEISHU_TASK_LIST_LIMIT).map((task) => {
+    const marker = task.taskId === currentTaskId ? "*" : "-";
+    return `${marker} ${task.taskId} [${task.status}] ${task.title}`;
+  });
+
+  if (tasks.length > FEISHU_TASK_LIST_LIMIT) {
+    lines.push(`... ${tasks.length - FEISHU_TASK_LIST_LIMIT} more task(s) omitted`);
+  }
+
+  return [`Recent tasks (${tasks.length} total):`, ...lines].join("\n");
+}
+
+function formatAccountSummary(
+  snapshot: ReturnType<BridgeService["getSnapshot"]>,
+): string {
+  if (!snapshot.account?.account) {
+    return `No Codex account is currently loaded.\nrequiresOpenaiAuth: ${snapshot.account?.requiresOpenaiAuth ?? true}`;
+  }
+
+  return [
+    `accountType: ${snapshot.account.account.type}`,
+    snapshot.account.account.email ? `email: ${snapshot.account.account.email}` : undefined,
+    snapshot.account.account.planType ? `plan: ${snapshot.account.account.planType}` : undefined,
+    `requiresOpenaiAuth: ${snapshot.account.requiresOpenaiAuth}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatRateLimitWindow(
+  label: string,
+  window:
+    | {
+        usedPercent: number;
+        windowDurationMins: number;
+        resetsAt: number;
+      }
+    | null
+    | undefined,
+): string[] {
+  if (!window) {
+    return [`${label}: unavailable`];
+  }
+
+  return [
+    `${label}: ${window.usedPercent}% used`,
+    `${label} window: ${window.windowDurationMins}m`,
+    `${label} resetsAt: ${new Date(window.resetsAt * 1000).toISOString()}`,
+  ];
+}
+
+function formatRateLimitSummary(
+  snapshot: ReturnType<BridgeService["getSnapshot"]>,
+): string {
+  if (!snapshot.rateLimits?.rateLimits) {
+    return "Codex rate limits are currently unavailable.";
+  }
+
+  const limit = snapshot.rateLimits.rateLimits;
+  return [
+    `limitId: ${limit.limitId}`,
+    limit.limitName ? `limitName: ${limit.limitName}` : undefined,
+    ...formatRateLimitWindow("primary", limit.primary),
+    ...formatRateLimitWindow("secondary", limit.secondary),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatHealthSummary(
+  config: BridgeConfig,
+  snapshot: ReturnType<BridgeService["getSnapshot"]>,
+  feishuEnabled: boolean,
+): string {
+  return [
+    "status: ok",
+    `backend: ${config.codexBackend}`,
+    `feishuEnabled: ${feishuEnabled}`,
+    `seq: ${snapshot.seq}`,
+    `tasks: ${snapshot.tasks.length}`,
+    `accountLoaded: ${Boolean(snapshot.account?.account)}`,
+    `rateLimitsLoaded: ${Boolean(snapshot.rateLimits?.rateLimits)}`,
+  ].join("\n");
+}
+
+function formatHelpText(): string {
+  return [
+    "Feishu bridge commands:",
+    "/help",
+    "/status",
+    "/bind <taskId>",
+    "/unbind",
+    "/tasks",
+    "/task [taskId]",
+    "/health",
+    "/account",
+    "/limits",
+    "/interrupt",
+    "/retry [text]",
+    "/approve [requestId]",
+    "/decline [requestId]",
+    "/cancel [requestId]",
+  ].join("\n");
+}
+
+function truncateReplyText(text: string): string {
+  const normalized = text.trim();
+  if (normalized.length <= FEISHU_REPLY_MAX_CHARS) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, FEISHU_REPLY_MAX_CHARS - 16)}\n\n[truncated]`;
 }
 
 function summarizeIncomingMessage(
@@ -169,6 +323,7 @@ export class FeishuBridge {
   private subscribed = false;
   private longConnectionHandle: LongConnectionHandle | null = null;
   private readonly longConnectionFactory?: LongConnectionFactory;
+  private readonly deliveredAgentMessageIds = new Set<string>();
 
   constructor(
     private readonly options: {
@@ -314,12 +469,26 @@ export class FeishuBridge {
       return;
     }
 
-    if (!FEISHU_SYNC_EVENT_KINDS.has(event.kind)) {
+    const task = this.options.service.getTask(event.taskId);
+    if (!task) {
       return;
     }
 
-    const task = this.options.service.getTask(event.taskId);
-    if (!task) {
+    const syncedAgentReply = this.extractAgentReply(event);
+    if (syncedAgentReply) {
+      const bindingState = await this.ensureTaskBinding(task, event);
+      if (!bindingState.task.feishuBinding) {
+        return;
+      }
+
+      await this.replyToMessage(
+        bindingState.task.feishuBinding.rootMessageId ?? bindingState.task.feishuBinding.threadKey,
+        syncedAgentReply,
+      );
+      return;
+    }
+
+    if (!FEISHU_SYNC_EVENT_KINDS.has(event.kind)) {
       return;
     }
 
@@ -336,6 +505,38 @@ export class FeishuBridge {
       bindingState.task.feishuBinding.rootMessageId ?? bindingState.task.feishuBinding.threadKey,
       createSummary(bindingState.task, event),
     );
+  }
+
+  private extractAgentReply(event: BridgeServiceEvent["event"]): string | null {
+    if (event.kind !== "task.updated") {
+      return null;
+    }
+
+    const payload = event.payload as {
+      item?: {
+        id?: string;
+        type?: string;
+        text?: string;
+      };
+    };
+    const item = payload.item;
+    if (!item || item.type !== "agentMessage" || !item.id || !item.text?.trim()) {
+      return null;
+    }
+
+    if (this.deliveredAgentMessageIds.has(item.id)) {
+      return null;
+    }
+
+    this.deliveredAgentMessageIds.add(item.id);
+    if (this.deliveredAgentMessageIds.size > FEISHU_SYNCED_AGENT_MESSAGE_LIMIT) {
+      const oldest = this.deliveredAgentMessageIds.values().next().value;
+      if (oldest) {
+        this.deliveredAgentMessageIds.delete(oldest);
+      }
+    }
+
+    return item.text.trim();
   }
 
   private async ensureTaskBinding(
@@ -416,76 +617,29 @@ export class FeishuBridge {
     const actorId = sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? sender?.sender_id?.union_id ?? "unknown";
     const text = parseTextContent(message.content);
     const { command, args } = normalizeCommand(text);
+    const slashCommand = isSlashCommand(text);
     const replyTargetId = message.message_id ?? message.root_id ?? message.parent_id ?? message.thread_id ?? lookupId;
     const currentBinding = buildBindingFromMessage(message);
     let task = this.options.service.findTaskByFeishuBinding(message.chat_id, lookupIds);
 
-    if (command === "status") {
-      if (!task) {
-        await this.replyToMessage(replyTargetId, "This Feishu thread is currently unbound. Use /bind <taskId> to attach it to an existing task.");
-        return;
+    if (slashCommand) {
+      try {
+        await this.handleSlashCommand({
+          command,
+          args,
+          task,
+          currentBinding,
+          replyTargetId,
+        });
+      } catch (error) {
+        this.options.logger.warn("failed to execute feishu slash command", {
+          ...summary,
+          lookupIds,
+          command: command || "/",
+          error,
+        });
+        await this.replyToMessage(replyTargetId, `Command failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-
-      const binding = task.feishuBinding;
-      await this.replyToMessage(
-        replyTargetId,
-        [
-          `Thread status: bound`,
-          `taskId: ${task.taskId}`,
-          `title: ${task.title}`,
-          `status: ${task.status}`,
-          binding ? `threadKey: ${binding.threadKey}` : undefined,
-          binding?.rootMessageId ? `rootMessageId: ${binding.rootMessageId}` : undefined,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      );
-      return;
-    }
-
-    if (command === "bind") {
-      if (!currentBinding) {
-        await this.replyToMessage(replyTargetId, "This message cannot be bound because the current Feishu thread identifiers are incomplete.");
-        return;
-      }
-
-      const targetTaskId = args[0];
-      if (!targetTaskId) {
-        if (task) {
-          await this.replyToMessage(replyTargetId, `This thread is already bound to ${task.taskId}. Use /unbind to detach it or /bind <taskId> to rebind.`);
-        } else {
-          await this.replyToMessage(replyTargetId, "Usage: /bind <taskId>");
-        }
-        return;
-      }
-
-      const targetTask = this.options.service.getTask(targetTaskId);
-      if (!targetTask) {
-        await this.replyToMessage(replyTargetId, `Unknown task: ${targetTaskId}`);
-        return;
-      }
-
-      if (task && task.taskId !== targetTaskId) {
-        await this.options.service.unbindFeishuThread(task.taskId);
-      }
-
-      task = await this.options.service.bindFeishuThread(targetTaskId, currentBinding);
-      await this.replyToMessage(
-        replyTargetId,
-        `Bound this Feishu thread to task ${task.taskId} (${task.title}). Use /status to inspect or /unbind to detach.`,
-      );
-      return;
-    }
-
-    if (command === "unbind") {
-      if (!task) {
-        await this.replyToMessage(replyTargetId, "This Feishu thread is already unbound.");
-        return;
-      }
-
-      const unboundTaskId = task.taskId;
-      await this.options.service.unbindFeishuThread(task.taskId);
-      await this.replyToMessage(replyTargetId, `Unbound this Feishu thread from task ${unboundTaskId}. Use /bind <taskId> to attach it again.`);
       return;
     }
 
@@ -504,15 +658,205 @@ export class FeishuBridge {
       command: command || "message",
     });
 
+    try {
+      switch (command) {
+        case "interrupt":
+          await this.options.service.interruptTask(task.taskId);
+          break;
+        case "retry":
+          await this.options.service.sendMessage(task.taskId, {
+            content: args.join(" ") || "Retry the last turn and continue.",
+          });
+          break;
+        case "approve":
+        case "decline":
+        case "cancel": {
+          const decision = command === "approve" ? "accept" : command;
+          const requestId = args[0];
+          const approval =
+            task.pendingApprovals.find((entry) => entry.requestId === requestId && entry.state === "pending") ??
+            task.pendingApprovals.find((entry) => entry.state === "pending");
+          if (approval) {
+            await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
+          } else {
+            await this.replyToMessage(
+              task.feishuBinding?.rootMessageId ?? replyTargetId,
+              `No pending approval was found for ${task.title}.`,
+            );
+          }
+          break;
+        }
+        default:
+          await this.options.service.sendMessage(task.taskId, {
+            content: text || `Message from ${actorId}`,
+          });
+          break;
+      }
+    } catch (error) {
+      this.options.logger.warn("failed to route feishu task message", {
+        ...summary,
+        lookupIds,
+        taskId: task.taskId,
+        error,
+      });
+      await this.replyToMessage(
+        task.feishuBinding?.rootMessageId ?? replyTargetId,
+        `Task action failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async handleSlashCommand(params: {
+    command: string;
+    args: string[];
+    task: BridgeTask | null;
+    currentBinding: FeishuThreadBinding | null;
+    replyTargetId: string;
+  }): Promise<void> {
+    const { command, args, task, currentBinding, replyTargetId } = params;
+    const snapshot = this.options.service.getSnapshot();
+
+    if (!command || command === "help") {
+      await this.replyToMessage(replyTargetId, formatHelpText());
+      return;
+    }
+
+    if (command === "tasks") {
+      await this.replyToMessage(replyTargetId, formatTaskList(this.options.service.listTasks(), task?.taskId));
+      return;
+    }
+
+    if (command === "task") {
+      const targetTask = args[0] ? this.options.service.getTask(args[0]) : task;
+      if (!targetTask) {
+        await this.replyToMessage(replyTargetId, "No task is currently selected for this thread. Use /task <taskId> or /bind <taskId>.");
+        return;
+      }
+
+      await this.replyToMessage(replyTargetId, formatTaskSummary(targetTask));
+      return;
+    }
+
+    if (command === "health") {
+      await this.replyToMessage(replyTargetId, formatHealthSummary(this.options.config, snapshot, this.enabled));
+      return;
+    }
+
+    if (command === "account") {
+      await this.replyToMessage(replyTargetId, formatAccountSummary(snapshot));
+      return;
+    }
+
+    if (command === "limits") {
+      await this.replyToMessage(replyTargetId, formatRateLimitSummary(snapshot));
+      return;
+    }
+
+    if (command === "status") {
+      if (!task) {
+        await this.replyToMessage(
+          replyTargetId,
+          "This Feishu thread is currently unbound. Use /bind <taskId> to attach it to an existing task.",
+        );
+        return;
+      }
+
+      const binding = task.feishuBinding;
+      await this.replyToMessage(
+        replyTargetId,
+        [
+          "Thread status: bound",
+          `taskId: ${task.taskId}`,
+          `title: ${task.title}`,
+          `status: ${task.status}`,
+          binding ? `threadKey: ${binding.threadKey}` : undefined,
+          binding?.rootMessageId ? `rootMessageId: ${binding.rootMessageId}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+      return;
+    }
+
+    if (command === "bind") {
+      if (!currentBinding) {
+        await this.replyToMessage(
+          replyTargetId,
+          "This message cannot be bound because the current Feishu thread identifiers are incomplete.",
+        );
+        return;
+      }
+
+      const targetTaskId = args[0];
+      if (!targetTaskId) {
+        if (task) {
+          await this.replyToMessage(
+            replyTargetId,
+            `This thread is already bound to ${task.taskId}. Use /unbind to detach it or /bind <taskId> to rebind.`,
+          );
+        } else {
+          await this.replyToMessage(replyTargetId, "Usage: /bind <taskId>");
+        }
+        return;
+      }
+
+      const targetTask = this.options.service.getTask(targetTaskId);
+      if (!targetTask) {
+        await this.replyToMessage(replyTargetId, `Unknown task: ${targetTaskId}`);
+        return;
+      }
+
+      if (task && task.taskId !== targetTaskId) {
+        await this.options.service.unbindFeishuThread(task.taskId);
+      }
+
+      const reboundTask = await this.options.service.bindFeishuThread(targetTaskId, currentBinding);
+      await this.replyToMessage(
+        replyTargetId,
+        `Bound this Feishu thread to task ${reboundTask.taskId} (${reboundTask.title}). Use /status to inspect or /unbind to detach.`,
+      );
+      return;
+    }
+
+    if (command === "unbind") {
+      if (!task) {
+        await this.replyToMessage(replyTargetId, "This Feishu thread is already unbound.");
+        return;
+      }
+
+      const unboundTaskId = task.taskId;
+      await this.options.service.unbindFeishuThread(task.taskId);
+      await this.replyToMessage(
+        replyTargetId,
+        `Unbound this Feishu thread from task ${unboundTaskId}. Use /bind <taskId> to attach it again.`,
+      );
+      return;
+    }
+
+    if (!FEISHU_KNOWN_COMMANDS.has(command)) {
+      await this.replyToMessage(replyTargetId, `Unknown command: /${command}\n\n${formatHelpText()}`);
+      return;
+    }
+
+    if (!task) {
+      await this.replyToMessage(
+        replyTargetId,
+        `This Feishu thread is currently unbound. Use /bind <taskId> before running /${command}.`,
+      );
+      return;
+    }
+
     switch (command) {
       case "interrupt":
         await this.options.service.interruptTask(task.taskId);
-        break;
+        await this.replyToMessage(replyTargetId, `Interrupted task ${task.taskId}.`);
+        return;
       case "retry":
         await this.options.service.sendMessage(task.taskId, {
           content: args.join(" ") || "Retry the last turn and continue.",
         });
-        break;
+        await this.replyToMessage(replyTargetId, `Queued retry for task ${task.taskId}.`);
+        return;
       case "approve":
       case "decline":
       case "cancel": {
@@ -521,21 +865,17 @@ export class FeishuBridge {
         const approval =
           task.pendingApprovals.find((entry) => entry.requestId === requestId && entry.state === "pending") ??
           task.pendingApprovals.find((entry) => entry.state === "pending");
-        if (approval) {
-          await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
-        } else {
-          await this.replyToMessage(
-            task.feishuBinding?.rootMessageId ?? replyTargetId,
-            `No pending approval was found for ${task.title}.`,
-          );
+        if (!approval) {
+          await this.replyToMessage(replyTargetId, `No pending approval was found for ${task.title}.`);
+          return;
         }
-        break;
+
+        await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
+        await this.replyToMessage(replyTargetId, `${command} applied to approval ${approval.requestId}.`);
+        return;
       }
       default:
-        await this.options.service.sendMessage(task.taskId, {
-          content: text || `Message from ${actorId}`,
-        });
-        break;
+        await this.replyToMessage(replyTargetId, formatHelpText());
     }
   }
 
@@ -608,7 +948,7 @@ export class FeishuBridge {
         body: JSON.stringify({
           receive_id: chatId,
           msg_type: "text",
-          content: JSON.stringify({ text }),
+          content: JSON.stringify({ text: truncateReplyText(text) }),
         }),
       },
     );
@@ -623,7 +963,7 @@ export class FeishuBridge {
         body: JSON.stringify({
           msg_type: "text",
           reply_in_thread: true,
-          content: JSON.stringify({ text }),
+          content: JSON.stringify({ text: truncateReplyText(text) }),
         }),
       },
     );

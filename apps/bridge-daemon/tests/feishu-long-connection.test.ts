@@ -441,6 +441,10 @@ describe("feishu long connection ingress", () => {
           .getTask(task.taskId)
           ?.conversation.some((message) => message.author === "user" && message.content === "hello after bind"),
       );
+      await waitFor(
+        () => requests.some((request) => request.body?.includes("Mock response for: hello after bind")),
+        "final agent reply mirrored back to feishu",
+      );
 
       await onMessage?.(
         {
@@ -487,6 +491,225 @@ describe("feishu long connection ingress", () => {
 
       const rootSendCountAfter = calls.filter((entry) => entry.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")).length;
       assert.equal(rootSendCountAfter, rootSendCountBefore);
+
+      await feishu.dispose();
+      await service.dispose();
+      await runtime.dispose();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("supports slash help, task listing, health, account, limits, and unknown commands without routing them as prompts", async () => {
+    const namespace = randomUUID();
+    const workspaceRoot = process.cwd();
+    const config = loadBridgeConfig(
+      {
+        WORKSPACE_PATH: workspaceRoot,
+        BRIDGE_STATE_DIR: path.join(".tmp", namespace, "state"),
+        CODEX_HOME: path.join(".tmp", namespace, "codex-home"),
+        BRIDGE_UPLOADS_DIR: path.join(".tmp", namespace, "uploads"),
+        CODEX_RUNTIME_BACKEND: "mock",
+        FEISHU_BASE_URL: "https://open.feishu.cn",
+        FEISHU_APP_ID: "cli-app-id",
+        FEISHU_APP_SECRET: "cli-app-secret",
+        FEISHU_DEFAULT_CHAT_ID: "oc_chat_id",
+        FEISHU_VERIFICATION_TOKEN: "",
+        FEISHU_ENCRYPT_KEY: "",
+      },
+      workspaceRoot,
+    );
+    const logger = createConsoleLogger("feishu-long-connection-global-commands-test");
+
+    await prepareBridgeDirectories(config);
+
+    const requests: Array<{ method: string; url: string; body?: string }> = [];
+    const originalFetch = global.fetch;
+    global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? "GET";
+      const body =
+        typeof init?.body === "string"
+          ? init.body
+          : init?.body === undefined || init?.body === null
+            ? undefined
+            : String(init.body);
+      requests.push({ method, url, body });
+
+      if (!url.startsWith("https://open.feishu.cn")) {
+        return originalFetch(input, init);
+      }
+
+      if (url.endsWith("/open-apis/auth/v3/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+        });
+      }
+
+      if (url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")) {
+        return new Response(JSON.stringify({ code: 0, data: { message_id: `om_root_${requests.length}` } }), {
+          status: 200,
+        });
+      }
+
+      if (url.includes("/open-apis/im/v1/messages/")) {
+        return new Response(JSON.stringify({ code: 0, data: { message_id: `om_reply_${requests.length}` } }), {
+          status: 200,
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    let onMessage: ((message?: any, sender?: any) => Promise<void>) | null = null;
+
+    const longConnectionFactory = async (params: { onMessage: (message?: any, sender?: any) => Promise<void> }) => {
+      onMessage = params.onMessage;
+      return {
+        stop: async () => {},
+      };
+    };
+
+    try {
+      const runtime = createCodexRuntime(config, logger);
+      await runtime.start();
+
+      const service = new BridgeService({ config, logger, runtime });
+      await service.initialize();
+
+      const feishu = new FeishuBridge({ config, logger, service, longConnectionFactory });
+      await feishu.initialize();
+
+      const task = await service.createTask({
+        title: "Slash command inventory task",
+      });
+
+      assert.ok(onMessage, "long connection handler should be registered");
+      const beforeConversationCounts = service
+        .listTasks()
+        .map((entry) => entry.conversation.length)
+        .reduce((sum, count) => sum + count, 0);
+
+      await onMessage?.(
+        {
+          message_id: "om_help",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/help" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(() => requests.some((request) => request.body?.includes("Feishu bridge commands:")), "help reply");
+
+      await onMessage?.(
+        {
+          message_id: "om_tasks",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/tasks" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(() => requests.some((request) => request.body?.includes("Recent tasks")), "tasks reply");
+
+      await onMessage?.(
+        {
+          message_id: "om_task",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: `/task ${task.taskId}` }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(() => requests.some((request) => request.body?.includes(`taskId: ${task.taskId}`)), "task reply");
+
+      await onMessage?.(
+        {
+          message_id: "om_health",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/health" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(() => requests.some((request) => request.body?.includes("status: ok")), "health reply");
+
+      await onMessage?.(
+        {
+          message_id: "om_account",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/account" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(() => requests.some((request) => request.body?.includes("No Codex account is currently loaded")), "account reply");
+
+      await onMessage?.(
+        {
+          message_id: "om_limits",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/limits" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(() => requests.some((request) => request.body?.includes("limitId: codex")), "limits reply");
+
+      await onMessage?.(
+        {
+          message_id: "om_unknown",
+          thread_id: "omt_slash_global",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "/does-not-exist" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_global_commands",
+          },
+        },
+      );
+      await waitFor(
+        () => requests.some((request) => request.body?.includes("Unknown command: /does-not-exist")),
+        "unknown command reply",
+      );
+
+      const afterConversationCounts = service
+        .listTasks()
+        .map((entry) => entry.conversation.length)
+        .reduce((sum, count) => sum + count, 0);
+      assert.equal(afterConversationCounts, beforeConversationCounts);
 
       await feishu.dispose();
       await service.dispose();
