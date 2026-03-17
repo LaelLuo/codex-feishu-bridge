@@ -7,6 +7,10 @@ x-dev-base: &dev-base
     args:
       NODE_IMAGE: ${NODE_IMAGE:-node:20-bookworm}
   image: ${DEV_IMAGE_NAME:-codex-feishu-bridge-dev:local}
+  entrypoint:
+    - tini
+    - --
+    - /workspace/codex-feishu-bridge/docker/scripts/bootstrap-host-worktrees.sh
   working_dir: ${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}
   environment:
     WORKSPACE_PATH: ${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}
@@ -34,6 +38,10 @@ x-dev-base: &dev-base
     - type: bind
       source: ..
       target: ${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}
+    - type: bind
+      source: ../..
+      target: /opt/host-workspaces
+      read_only: true
     - type: volume
       source: workspace-node-modules
       target: ${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}/node_modules
