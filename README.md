@@ -19,8 +19,36 @@ The OpenAI VSCode extension is not the runtime authority for this project.
 - The architecture is locked to a CLI-first runtime.
 - The bridge daemon, VSCode frontend, Feishu bridge, manual import flow, and recovery hardening are implemented in the local development path.
 - `docs/plan.md` is the only execution-plan source for the repository.
-- The current implementation focus is live validation, not new surface-area expansion.
+- The selected live-validation path is complete for `runtime`, `desktop`, and `feishu`.
 - Multi-agent live validation now uses a sibling shared hub instead of branch-local handoff docs.
+
+## Closeout Summary
+
+- Runtime live validation is complete on the authoritative `stdio` daemon at `http://127.0.0.1:8891`, including:
+  - real `thread/start`
+  - real `turn/start`
+  - immediate `turn/steer`
+  - immediate `turn/interrupt`
+  - approval accept flow
+  - structured diff recovery for the affected real path
+- Desktop live validation is complete for the selected closeout path, including:
+  - task tree
+  - detail panel
+  - diff opening
+  - approval resolution
+  - image upload
+  - bounded post-fix diff recheck on `8891`
+- Feishu live validation is complete for the selected closeout path, using the official SDK long-connection client:
+  - ingress delivery
+  - thread continuity
+  - `interrupt`, `retry`, `cancel`, `approve`, and `decline`
+- QA's final gate for this round is `conditional go`.
+
+The `conditional go` caveats are non-gating for the selected path:
+
+- runtime manual import and resume were not re-proven as separate real-stdio closeout slices
+- desktop `login` and `retry` were not retained as standalone final live-evidence slices
+- Feishu webhook/public-callback compatibility was not the selected live path in this round
 
 ## Quick Start
 
@@ -57,6 +85,9 @@ npm run test:daemon
 npm run build:extension
 npm run test:extension
 ```
+
+For real `stdio` and Feishu runs, prefer calling `docker compose` directly with `--env-file docker/.env`.
+The helper npm scripts in `package.json` keep using `docker/.env.example` as the default mock/dev baseline.
 
 7. Use the bridge CLI wrapper from the development container:
 
@@ -121,7 +152,7 @@ Override it with `CODEX_FEISHU_BRIDGE_HUB_ROOT` when needed.
 
 ## Live Validation Workflow
 
-Use this sequence for the next end-to-end pass:
+Use this sequence when you want to reproduce the selected live-validation path:
 
 1. Start `bridge-runtime` with `CODEX_RUNTIME_BACKEND=stdio`.
 2. If you want Docker to reuse a real host login state and host `codex` binary, set:
@@ -137,7 +168,7 @@ export CODEX_RUNTIME_BACKEND=stdio
 3. Start the runtime container with those overrides in scope:
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example up -d bridge-runtime
+docker compose -f docker/compose.yaml --env-file docker/.env up -d bridge-runtime
 ```
 
 4. Verify auth endpoints before creating tasks:
@@ -181,7 +212,10 @@ Then open the repository in VSCode and run the `Codex Feishu Bridge Extension` l
 - run `Codex Bridge: Open Status`
 - create or resume a task and verify task state, diffs, approvals, and uploads against the daemon
 
-9. Expose `/feishu/webhook` with a user-provided public URL and validate threaded message creation plus reply routing from a real Feishu chat.
+9. For Feishu live validation, prefer the official SDK long-connection path.
+Set `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_DEFAULT_CHAT_ID`, then let `bridge-daemon` start the long-connection client automatically at startup.
+
+Use `/feishu/webhook` only as a compatibility path when you intentionally keep webhook credentials configured.
 
 ## Multi-Agent Restart Workflow
 
@@ -207,7 +241,8 @@ After restart, each agent should:
 - `bridge-daemon` is the local bridge orchestrator.
 - `codex app-server` is managed by the daemon and provides the thread runtime.
 - VSCode connects to the daemon over localhost HTTP and WebSocket.
-- Feishu callbacks enter through a user-provided public URL, typically exposed with a local tunnel such as `frp`.
+- The selected Feishu live path now uses the official SDK long-connection client instead of a public callback URL.
+- `/feishu/webhook` remains available as a compatibility ingress when webhook credentials are still configured.
 - The daemon now exposes `/tasks`, `/tasks/import`, `/tasks/:id/resume`, `/tasks/:id/messages`, `/tasks/:id/uploads`, `/tasks/:id/approvals/*`, and `/feishu/webhook`.
 - The daemon persists task state under `.tmp/` and reconciles recovered tasks on restart.
 - Live runtime validation should prefer `CODEX_RUNTIME_BACKEND=stdio` so the daemon manages the real `codex app-server` process directly.
@@ -218,7 +253,9 @@ After restart, each agent should:
 
 ## Feishu Notes
 
-- Set `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_VERIFICATION_TOKEN`, `FEISHU_ENCRYPT_KEY`, and `FEISHU_DEFAULT_CHAT_ID` in `docker/.env`.
+- Set `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_DEFAULT_CHAT_ID` in `docker/.env` for the long-connection path.
+- `bridge-daemon` starts the official SDK long-connection client automatically when those three values are present.
+- `FEISHU_VERIFICATION_TOKEN` and `FEISHU_ENCRYPT_KEY` are only required for the webhook compatibility path.
 - Each task is mirrored into one Feishu root message plus reply chain.
 - Incoming text replies support plain message steering plus control words such as `approve`, `decline`, `cancel`, `interrupt`, and `retry`.
 

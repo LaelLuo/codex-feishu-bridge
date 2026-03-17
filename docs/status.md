@@ -2,10 +2,10 @@
 
 ## Current Snapshot
 
-- Date: 2026-03-17
-- Repository phase: v1 local workflow implemented, runtime live validation started
+- Date: 2026-03-18
+- Repository phase: v1 local workflow implemented, selected live validation complete, docs closeout aligned
 - Runtime mode: CLI-first Codex runtime with Docker-first development
-- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, and recovery paths are implemented; real `stdio` runtime alignment is now in place, live ingress validation remains open, and the multi-agent shared hub cutover is implemented and ready for agent restart adoption
+- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, recovery, and the shared hub workflow are implemented; the selected live closeout path is validated for runtime, desktop, and Feishu, and QA now treats merge readiness as `conditional go`
 
 ## Completed
 
@@ -30,25 +30,29 @@
 - Added `scripts/hub-cli.mjs` and the shared hub workflow for cross-worktree agent communication
 - Added hub integration tests for init, post, broadcast, ack, done, status, doctor, and concurrent writes
 - Switched the multi-agent workflow design from branch-local handoff docs to the sibling shared hub at `/home/dungloi/Workspaces/codex-feishu-bridge-hub`
+- Completed the runtime live closeout path on the authoritative daemon `http://127.0.0.1:8891`, including real `thread/start`, `turn/start`, immediate `turn/steer`, immediate `turn/interrupt`, approval accept flow, and structured diff recovery for the affected real task path
+- Completed the desktop live closeout path on `http://127.0.0.1:8891`, including task tree, detail panel, diff opening, approval resolution, image upload, and a bounded post-fix diff recheck
+- Completed the Feishu live closeout path with the official SDK long-connection client, including ingress delivery, thread continuity, and live control-command routing for `interrupt`, `retry`, `cancel`, `approve`, and `decline`
+- Integrated the selected runtime, desktop, and Feishu closeout commits onto `master`, plus two integration fixes for worktree bootstrap behavior and Feishu webhook approval payload alignment
+- Collected QA final guidance as `conditional go`: no active blocker remains for the selected live path, but a few non-gating capabilities remain outside this round's proof boundary
 
 ## Implemented But Not Yet Live-Validated
 
-- Real Feishu app credentials and the user-provided public callback URL are still external runtime inputs
-- VSCode extension behavior has been locally tested against mocks but still needs a live daemon validation pass
-- A full daemon-driven live pass of `thread/start`, `turn/start`, `turn/steer`, and `turn/interrupt` is still pending
-- The VSCode extension still needs a real UI pass in an Extension Development Host, even though the launch path is now documented and checked in
-- The current five worktree agents still need one restart and hub-view cutover before they can use the new shared communication channel
+- Runtime manual import and resume were not re-proven as separate real-stdio closeout slices in this round
+- Desktop `login` entry and `retry` action were not retained as standalone final live-evidence slices
+- Feishu webhook/public-callback compatibility remains implemented but was not the selected live-validation path for this round
 
 ## Next Iteration Focus
 
-- Restart the five worktree agents with `resume --last` and make them read their hub inbox views before continuing work
-- Revalidate Feishu root-message creation, reply routing, and duplicate suppression against live webhook traffic
-- Finish the daemon-driven live thread and turn control pass on top of the now-aligned `stdio` adapter
-- Run the documented Extension Development Host pass for the VSCode frontend
-- Execute the remaining live-validation work through dedicated agent worktrees coordinated by `docs/worktree-agents.md` plus the shared hub
+- Decide whether the current `conditional go` bar is sufficient for release-style signoff, or whether the remaining non-gating paths need separate proof
+- If the release bar widens, re-prove runtime manual import/resume on real `stdio`
+- If the release bar widens, capture standalone desktop live evidence for `login` and `retry`
+- If the compatibility path still matters, run a dedicated live pass for Feishu webhook/public-callback ingress
+- Decide whether to keep the current verbose Feishu ingress diagnostics as-is or tone them down after closeout
+- Optionally refresh QA-owned evidence snapshots if long-lived acceptance records are required beyond the coordinator closeout docs
 
 ## Deferred Decisions
 
 - Whether to promote the CLI wrapper into a dedicated `apps/` package instead of keeping it under `scripts/`
-- Whether to add stronger diagnostics for tunnel health and Feishu delivery failures
+- Whether the current Feishu ingress diagnostics should remain at their present verbosity
 - Whether a future cloud relay or multi-user deployment path belongs in scope after live validation

@@ -48,3 +48,35 @@
 - Fixed the multi-agent communication model by moving live agent traffic out of branch-local docs and into the sibling hub at `/home/dungloi/Workspaces/codex-feishu-bridge-hub`.
 - Added integration coverage for hub init, post, broadcast, ack, done, status, doctor, and concurrent write locking.
 - Updated `AGENTS.md`, `docs/agents.md`, `docs/worktree-agents.md`, `docs/architecture.md`, `docs/status.md`, and `README.md` to reflect the shared-hub workflow.
+
+## 2026-03-18
+
+- Cherry-picked the selected runtime closeout commits onto `master`:
+  - `5b4aea9` `🐛 fix: harden live turn control during stdio startup`
+  - `789ef08` `🧪 test: expand live runtime validation helper`
+  - `da314ca` `🧪 test: use worktree path in turn control test`
+  - `a20f3ff` `🐛 fix: align stdio approval request handling`
+  - `f585034` `🐛 fix: mirror worktree gitdir paths in docker`
+  - `4450f01` `🐛 fix: backfill structured diffs from agent summaries`
+- Cherry-picked the selected desktop closeout commits onto `master`:
+  - `8d458ac` `🐛 fix: harden vscode extension live daemon smoke`
+  - `36ce6c7` `🐛 fix: stabilize vscode live smoke against real daemon`
+- Cherry-picked the selected Feishu closeout commits onto `master`:
+  - `7e65787` `🐛 fix: require full feishu webhook configuration`
+  - `cffeeb0` `✨ feat: add feishu long connection ingress`
+  - `3e7e1b3` `✅ test: localize feishu ingress fixtures`
+  - `f81ca4a` `✨ feat: wire feishu daemon to long connection sdk`
+  - `940f0de` `🐛 fix: route feishu thread replies by thread id`
+  - `8f45dea` `🪵 chore: add feishu ingress diagnostics`
+  - `0cbe621` `🐛 fix: collapse feishu startup sync into one thread`
+- Added two mainline integration follow-ups during the final intake:
+  - `9e38e0a` `🐛 fix: skip worktree bootstrap for git directories`
+  - `4f83668` `✅ test: align feishu webhook approvals with runtime payloads`
+- Closed the selected live-validation path on the authoritative daemon `http://127.0.0.1:8891`:
+  - runtime: real `thread/start`, `turn/start`, immediate `turn/steer`, immediate `turn/interrupt`, approval accept flow, and structured diff recovery
+  - desktop: task tree, detail panel, diff opening, approval resolution, image upload, and the bounded post-fix diff recheck
+  - Feishu: official SDK long-connection ingress, thread continuity, and live control-command routing for `interrupt`, `retry`, `cancel`, `approve`, and `decline`
+- Recorded QA's final merge gate as `conditional go`:
+  - no active blocker remains for the selected live path
+  - the remaining non-gating gaps are runtime manual import/resume as separate real-stdio proof, desktop `login` and `retry` as standalone final live slices, and the Feishu webhook/public-callback compatibility path
+- Started the curated docs-only closeout so `README.md`, `docs/status.md`, `docs/plan.md`, and `docs/log.md` match the merged mainline and the final shared-hub state.

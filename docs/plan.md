@@ -74,78 +74,68 @@ The historical root `PLAN.md` draft has been absorbed here and removed to avoid 
 - Commit boundary: `🐛 fix: harden task recovery and feishu action replay`.
 - Status: completed.
 
-## Next Iteration: Live Validation
+### Phase 8: Live Validation and Closeout
 
-The next iteration is not feature expansion.
-It is a live-validation pass against the real runtime, real Feishu ingress, and real desktop loading path.
-The recommended execution mode for this phase is parallel work across dedicated worktrees coordinated through `docs/worktree-agents.md` and the sibling shared hub at `/home/dungloi/Workspaces/codex-feishu-bridge-hub`.
-
-### Runtime and Auth Validation
-
-- Run `bridge-daemon` with `CODEX_RUNTIME_BACKEND=stdio`.
-- Current progress in this slice:
-  - daemon can run in Docker against a host-mounted Codex binary directory and host Codex home
-  - `/health`, `/auth/account`, `/auth/rate-limits`, and task reconciliation were verified against a real ChatGPT login
-- Validate against a real logged-in `codex app-server`:
-  - `account/login/start`
-  - `account/read`
-  - `account/rateLimits/read`
-  - `thread/start`
-  - `thread/resume`
-  - `thread/list`
-  - `thread/read`
-  - `turn/start`
-  - `turn/steer`
-  - `turn/interrupt`
-- Compare real runtime notifications against the current bridge mapping:
-  - thread state changes
-  - turn lifecycle
-  - `fileChange`
-  - `commandExecution`
-  - `serverRequest/resolved`
-- If mismatches appear, only adjust the runtime adapter and bridge-service mapping unless the real protocol is missing an essential field.
-- Expected commit boundary: `✨ feat: align daemon runtime with live codex app-server`.
-
-### Feishu Live Validation
-
-- Validate with real `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_VERIFICATION_TOKEN`, `FEISHU_ENCRYPT_KEY`, and `FEISHU_DEFAULT_CHAT_ID`.
-- Recommended owner: `@feishu-agent`
-- Validate via a user-provided public callback URL:
-  - new task sends the root message
-  - later updates stay in the same reply chain
-  - mobile replies route to the correct task
-  - `approve`, `decline`, `cancel`, `interrupt`, and `retry` reach the right task
-  - duplicate webhook deliveries are still deduplicated
-- If the live payload differs from the mocked assumption, only adjust the Feishu bridge and HTTP ingress adapter.
-- Expected commit boundary: `✨ feat: align feishu bridge with live webhook flow`.
-
-### Desktop Live Validation
-
-- Load `apps/vscode-extension` in VSCode development mode against the real daemon.
-- Recommended owner: `@desktop-agent`
-- Current progress in this slice:
-  - a checked-in `.vscode/launch.json` is available for the Extension Development Host
-  - `README.md` now includes the runtime helper and the extension launch workflow
-- Validate:
+- Completed the selected runtime live path on the authoritative daemon `http://127.0.0.1:8891`:
+  - real `thread/start`
+  - real `turn/start`
+  - immediate `turn/steer`
+  - immediate `turn/interrupt`
+  - real approval accept flow
+  - structured diff recovery for the affected real path
+- Completed the selected desktop live path against the same daemon:
   - task tree
-  - task detail panel
+  - detail panel
   - diff opening
-  - login entry
-  - sending messages
-  - image uploads
-  - approvals and retry actions
-- Add explicit live-loading instructions to `README.md`.
-- Keep `scripts/bridge-cli.mjs` as a script in this iteration; do not promote it into its own `apps/` package yet.
-- Expected docs commit boundary: `📝 docs: add live validation workflow for vscode and daemon`.
-- Possible polish commit if small behavior fixes are required: `🐛 fix: polish vscode bridge behavior against live daemon`.
+  - approval resolution
+  - image upload
+  - bounded post-fix diff recheck
+- Completed the selected Feishu live path with the official SDK long-connection client:
+  - ingress establishment and delivery
+  - thread continuity
+  - live control-command routing for `interrupt`, `retry`, `cancel`, `approve`, and `decline`
+- Merged the selected runtime, desktop, and Feishu closeout commits to `master`, plus the two integration fixes needed during mainline intake:
+  - `9e38e0a` `🐛 fix: skip worktree bootstrap for git directories`
+  - `4f83668` `✅ test: align feishu webhook approvals with runtime payloads`
+- Validation:
+  - `npm run test:hub`
+  - `npm run test:protocol`
+  - `npm run test:shared`
+  - `npm run test:daemon`
+  - `npm run test:extension`
+  - `npm run build:daemon`
+  - `npm run build:extension`
+  - selected live evidence on `8891` plus the current Feishu long-connection group
+- Status: completed.
 
-### Coordination and QA
+## Post-Closeout Follow-Up
 
-- Recommended owners:
-  - `@coordinator-agent` for cross-agent planning, shared docs, and merge readiness
-  - `@qa-agent` for validation scripts, acceptance matrix, and execution reports
-- Keep ownership and startup rules in `docs/worktree-agents.md`.
-- Keep live handoffs, blockers, acknowledgements, and done signals in the shared hub.
+The mainline closeout bar for the selected path is now met.
+The remaining work is optional follow-up, not core feature expansion.
+
+### Runtime Follow-Up
+
+- If the release bar widens, re-prove manual import and resume on real `stdio`.
+- Investigate the separate `apps/bridge-daemon/tests/task-http.test.ts` timing fragility that was intentionally left outside the live-alignment slices.
+- Decide whether `docker compose up -d --force-recreate bridge-runtime` should remain the recommended live refresh path or be reduced to a plain restart workflow.
+
+### Desktop Follow-Up
+
+- If the release bar widens, capture standalone live evidence for the `login` entry and the `retry` action.
+- Decide whether the current headless smoke is sufficient long-term or whether a more explicit EDH regression path is worth keeping.
+
+### Feishu Follow-Up
+
+- The selected live path is now the official SDK long-connection client.
+- If webhook compatibility still matters, run a dedicated live pass for the public-callback path instead of treating it as part of the completed closeout bar.
+- Decide whether the current Feishu ingress diagnostics should remain at the present verbosity after closeout.
+
+### QA and Coordinator Follow-Up
+
+- If long-lived evidence snapshots are still wanted, curate one final QA-only refresh for:
+  - `docs/acceptance-matrix.md`
+  - `docs/integration-record.md`
+- Keep shared hub traffic dynamic; do not re-expand branch-local docs into a live message board.
 
 ## Acceptance and Exit Criteria
 
@@ -159,13 +149,13 @@ The recommended execution mode for this phase is parallel work across dedicated 
   - `npm run test:extension`
   - `npm run build:daemon`
   - `npm run build:extension`
-- Live runtime validation confirms auth, thread lifecycle, turn control, and approval/diff events can flow through the current task model.
-- Live Feishu validation confirms root-message creation, reply-chain updates, reply routing, and duplicate suppression.
-- Live desktop validation confirms the VSCode extension can connect to the daemon and use the implemented task controls.
+- Selected live runtime validation confirms auth, thread lifecycle, turn control, approval handling, and structured diff delivery can flow through the current task model.
+- Selected live Feishu validation confirms long-connection ingress, thread continuity, reply routing, and control-command routing.
+- Selected live desktop validation confirms the VSCode extension can connect to the daemon and use the implemented task controls for tree/detail/diff/approval/upload.
 
 ## Assumptions and Non-Goals
 
-- The repository already covers the original implementation plan; the next focus is live validation, not new product scope.
+- The repository already covers the original implementation plan; the current focus after closeout is optional hardening and release-bar clarification, not new product scope.
 - `manual raw codex` support means import, resume, and post-import control, not live attach to an arbitrary external running CLI process.
-- Public ingress for Feishu remains user-provided; this repository does not add a built-in public relay in `v1`.
+- The selected Feishu live path now uses the official SDK long-connection client. Webhook/public-callback ingress remains a compatibility path, not part of the completed closeout bar.
 - If live `codex app-server` or live Feishu differs from the mocked assumptions, adapt the integration layer first and avoid reshaping the task model unless it is truly insufficient.
