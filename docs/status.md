@@ -5,7 +5,7 @@
 - Date: 2026-03-18
 - Repository phase: v1 local workflow implemented, selected live validation complete, docs closeout aligned
 - Runtime mode: CLI-first Codex runtime with Docker-first development
-- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, recovery, and the shared hub workflow are implemented; the selected live closeout path is validated for runtime, desktop, and Feishu, and QA now treats merge readiness as `conditional go`
+- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, and recovery are implemented; the selected live closeout path is validated for runtime, desktop, and Feishu, and QA now treats merge readiness as `conditional go`
 
 ## Completed
 
@@ -18,6 +18,8 @@
 - Implemented daemon task orchestration, WebSocket snapshots, uploads, and approvals
 - Implemented a VSCode desktop task dashboard with commands, diff viewing, status panel, and image upload flow
 - Implemented Feishu root-message binding, reply routing, signature/token checks, and duplicate webhook suppression
+- Reworked Feishu into pure-thread mode with explicit `/new` task creation, persisted execution profiles, and slash-command-only control routing
+- Removed Feishu status-summary push behavior so mobile threads only surface final agent replies, approvals, explicit errors, and command results
 - Implemented manual thread import/resume plus a small CLI wrapper
 - Implemented recovery reconciliation and stale approval expiration on restart
 - Aligned the `stdio` runtime adapter with the live app-server schema for `thread/list`, timestamp normalization, object-shaped thread status, and `turn/steer`
@@ -48,6 +50,7 @@
 - If the release bar widens, re-prove runtime manual import/resume on real `stdio`
 - If the release bar widens, capture standalone desktop live evidence for `login` and `retry`
 - If the compatibility path still matters, run a dedicated live pass for Feishu webhook/public-callback ingress
+- If the mobile UX needs widening, decide whether `/new` should stay explicit-only or eventually allow an opt-in auto-create policy
 - Decide whether to keep the current verbose Feishu ingress diagnostics as-is or tone them down after closeout
 - Optionally refresh QA-owned evidence snapshots if long-lived acceptance records are required beyond the coordinator closeout docs
 

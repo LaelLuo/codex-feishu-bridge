@@ -127,6 +127,10 @@ The remaining work is optional follow-up, not core feature expansion.
 ### Feishu Follow-Up
 
 - The selected live path is now the official SDK long-connection client.
+- The mobile thread UX now runs in pure-conversation mode:
+  - explicit `/new` task creation
+  - no automatic status-summary push
+  - slash-command control plus plain-text conversation on bound threads
 - If webhook compatibility still matters, run a dedicated live pass for the public-callback path instead of treating it as part of the completed closeout bar.
 - Decide whether the current Feishu ingress diagnostics should remain at the present verbosity after closeout.
 

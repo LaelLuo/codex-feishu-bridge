@@ -80,3 +80,28 @@
   - no active blocker remains for the selected live path
   - the remaining non-gating gaps are runtime manual import/resume as separate real-stdio proof, desktop `login` and `retry` as standalone final live slices, and the Feishu webhook/public-callback compatibility path
 - Started the curated docs-only closeout so `README.md`, `docs/status.md`, `docs/plan.md`, and `docs/log.md` match the merged mainline and the final shared-hub state.
+- Reworked the Feishu mobile surface into pure-thread mode:
+  - ordinary unbound text no longer auto-creates tasks
+  - automatic status-summary push to Feishu threads was removed
+  - final agent replies, approvals, explicit errors, and slash-command results remain visible
+- Added a thread-scoped `/new` wizard for Feishu task creation and configuration:
+  - `/new`
+  - `/new prompt ...`
+  - `/new models`
+  - `/new model ...`
+  - `/new effort ...`
+  - `/new sandbox ...`
+  - `/new approval ...`
+  - `/new create`
+  - `/new cancel`
+- Added persistent task execution profiles for Feishu-created tasks:
+  - model
+  - reasoning effort
+  - sandbox mode
+  - approval policy
+- Extended the runtime/service path to carry execution-profile settings through `thread/start`, `turn/start`, and later follow-up turns.
+- Replaced the old Feishu webhook and long-connection tests with coverage for:
+  - explicit `/new` creation
+  - no-noise unbound threads
+  - bind/status/unbind regression
+  - approval slash commands

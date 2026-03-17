@@ -20,7 +20,7 @@ The OpenAI VSCode extension is not the runtime authority for this project.
 - The bridge daemon, VSCode frontend, Feishu bridge, manual import flow, and recovery hardening are implemented in the local development path.
 - `docs/plan.md` is the only execution-plan source for the repository.
 - The selected live-validation path is complete for `runtime`, `desktop`, and `feishu`.
-- Multi-agent live validation now uses a sibling shared hub instead of branch-local handoff docs.
+- Feishu threads now run in pure-conversation mode with explicit `/new` task creation and no background status-summary push.
 
 ## Closeout Summary
 
@@ -105,9 +105,12 @@ npm run validate:runtime:container
 
 9. Load `apps/vscode-extension` in VSCode to use the desktop task view and commands.
 
-## Shared Hub Workflow
+## Shared Hub Workflow (Archived)
 
-Use the shared hub when multiple Codex CLI agents are running in separate worktrees:
+This workflow was used during the historical multi-agent closeout and is not required for normal bridge usage now.
+The live sibling hub directory was removed from the current local environment, but the commands remain here for archival reference.
+
+If you intentionally recreate that workflow, use the shared hub when multiple Codex CLI agents are running in separate worktrees:
 
 1. Initialize the sibling hub once:
 
@@ -215,6 +218,15 @@ Then open the repository in VSCode and run the `Codex Feishu Bridge Extension` l
 9. For Feishu live validation, prefer the official SDK long-connection path.
 Set `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and either `FEISHU_DEFAULT_CHAT_ID` or `FEISHU_DEFAULT_CHAT_NAME`, then let `bridge-daemon` start the long-connection client automatically at startup.
 
+The current mobile workflow is:
+
+- start a new Feishu topic/thread
+- run `/new`
+- optionally refine the draft with `/new prompt ...`, `/new models`, `/new model ...`, `/new effort ...`, `/new sandbox ...`, and `/new approval ...`
+- run `/new create`
+- continue the task with plain text in the same thread
+- use `/status`, `/interrupt`, `/retry`, `/approve`, `/decline`, `/cancel`, `/bind`, and `/unbind` as needed
+
 If you only know the group name, you can inspect or resolve visible chats with:
 
 ```bash
@@ -265,8 +277,20 @@ After restart, each agent should:
 - Set `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and either `FEISHU_DEFAULT_CHAT_ID` or `FEISHU_DEFAULT_CHAT_NAME` in `docker/.env` for the long-connection path.
 - `bridge-daemon` starts the official SDK long-connection client automatically when those three values are present.
 - `FEISHU_VERIFICATION_TOKEN` and `FEISHU_ENCRYPT_KEY` are only required for the webhook compatibility path.
-- Each task is mirrored into one Feishu root message plus reply chain.
-- Incoming text replies support plain message steering plus control words such as `approve`, `decline`, `cancel`, `interrupt`, and `retry`.
+- Local task creation no longer auto-creates Feishu root messages, and Feishu no longer receives background task status summaries.
+- Unbound plain text in a Feishu thread does nothing. Use `/new` to draft and create a new task or `/bind <taskId>` to attach an existing task.
+- `/new` is a thread-scoped wizard. It supports:
+  - `/new`
+  - `/new prompt <text>`
+  - `/new models`
+  - `/new model <model-id>`
+  - `/new effort <none|minimal|low|medium|high|xhigh>`
+  - `/new sandbox <read-only|workspace-write|danger-full-access>`
+  - `/new approval <untrusted|on-failure|on-request|never>`
+  - `/new create`
+  - `/new cancel`
+- Bound threads accept plain text as task input and slash controls such as `/status`, `/interrupt`, `/retry`, `/approve`, `/decline`, `/cancel`, `/bind`, and `/unbind`.
+- Automatic system output is kept intentionally sparse: final agent replies, approval messages, explicit errors, and slash-command results.
 
 ## Repository Map
 
