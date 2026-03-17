@@ -44,3 +44,7 @@
 - Added `docs/worktree-agents.md` as the multi-agent worktree coordination source of truth.
 - Split the remaining live-validation phase into recommended workstreams for `@coordinator-agent`, `@runtime-agent`, `@feishu-agent`, `@desktop-agent`, and `@qa-agent`.
 - Added project-specific bootstrap prompts so new agents can join without re-deriving repository rules.
+- Added `scripts/hub-cli.mjs` as a host-side shared hub for cross-worktree handoffs, broadcasts, acknowledgements, and completion signals.
+- Fixed the multi-agent communication model by moving live agent traffic out of branch-local docs and into the sibling hub at `/home/dungloi/Workspaces/codex-feishu-bridge-hub`.
+- Added integration coverage for hub init, post, broadcast, ack, done, status, doctor, and concurrent write locking.
+- Updated `AGENTS.md`, `docs/agents.md`, `docs/worktree-agents.md`, `docs/architecture.md`, `docs/status.md`, and `README.md` to reflect the shared-hub workflow.

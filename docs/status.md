@@ -5,7 +5,7 @@
 - Date: 2026-03-17
 - Repository phase: v1 local workflow implemented, runtime live validation started
 - Runtime mode: CLI-first Codex runtime with Docker-first development
-- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, and recovery paths are implemented; real `stdio` runtime alignment is now in place, live ingress validation remains open, and multi-agent worktree coordination docs are ready
+- Implementation state: daemon, VSCode frontend, Feishu bridge, manual import, and recovery paths are implemented; real `stdio` runtime alignment is now in place, live ingress validation remains open, and the multi-agent shared hub cutover is implemented and ready for agent restart adoption
 
 ## Completed
 
@@ -27,6 +27,9 @@
 - Added a checked-in VSCode Extension Development Host launch configuration for the desktop frontend
 - Verified the live runtime helper in Docker against the mock daemon in both read-only and create-thread modes
 - Added a multi-agent worktree coordination guide with role boundaries, mention rules, and bootstrap prompts
+- Added `scripts/hub-cli.mjs` and the shared hub workflow for cross-worktree agent communication
+- Added hub integration tests for init, post, broadcast, ack, done, status, doctor, and concurrent writes
+- Switched the multi-agent workflow design from branch-local handoff docs to the sibling shared hub at `/home/dungloi/Workspaces/codex-feishu-bridge-hub`
 
 ## Implemented But Not Yet Live-Validated
 
@@ -34,13 +37,15 @@
 - VSCode extension behavior has been locally tested against mocks but still needs a live daemon validation pass
 - A full daemon-driven live pass of `thread/start`, `turn/start`, `turn/steer`, and `turn/interrupt` is still pending
 - The VSCode extension still needs a real UI pass in an Extension Development Host, even though the launch path is now documented and checked in
+- The current five worktree agents still need one restart and hub-view cutover before they can use the new shared communication channel
 
 ## Next Iteration Focus
 
+- Restart the five worktree agents with `resume --last` and make them read their hub inbox views before continuing work
 - Revalidate Feishu root-message creation, reply routing, and duplicate suppression against live webhook traffic
 - Finish the daemon-driven live thread and turn control pass on top of the now-aligned `stdio` adapter
 - Run the documented Extension Development Host pass for the VSCode frontend
-- Execute the remaining live-validation work through dedicated agent worktrees coordinated via `docs/worktree-agents.md`
+- Execute the remaining live-validation work through dedicated agent worktrees coordinated by `docs/worktree-agents.md` plus the shared hub
 
 ## Deferred Decisions
 

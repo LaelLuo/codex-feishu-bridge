@@ -38,6 +38,13 @@
 - 每个 bridge task 绑定一个 Feishu 线程或回复链
 - 负责展示步骤、摘要、diff 摘要、审批和控制命令
 
+### Shared Agent Hub
+
+- 仓库外 sibling 目录 `/home/dungloi/Workspaces/codex-feishu-bridge-hub`
+- 负责多 worktree agent 之间的动态 handoff、blocked、ack、done 和 broadcast
+- `jsonl` 文件是机器真源，`views/*.md` 是 agent 直接阅读的人类友好镜像
+- 只承载实时协作，不替代 repo 内的稳定状态文档
+
 ## 目录结构
 
 - `apps/vscode-extension`: VSCode task dashboard and desktop actions
@@ -47,6 +54,14 @@
 - `docker/`: runtime image, compose, env templates
 - `docs/`: product, architecture, plan, status, logs, lessons, and agent manual
 - `.agent/`: templates and checkpoints for long-running agent work
+
+## 多 agent 通信模型
+
+- `docs/worktree-agents.md` 是静态协议真源
+- shared hub 是动态交接真源
+- branch-local worktree 文件不再承担实时消息总线职责
+- `coordinator-agent` 通过 hub 发起 broadcast 和 direct handoff
+- worker agents 每轮开始前先读自己的 hub view，再继续实现工作
 
 ## 任务与线程模型
 
@@ -111,6 +126,22 @@
 
 - 根脚本 `scripts/bridge-cli.mjs` 提供 `list`、`import`、`resume`、`send`
 - 在 `workspace-dev` 容器里使用时，daemon 地址默认应设为 `BRIDGE_BASE_URL=http://bridge-runtime:8787`
+
+## Shared Hub CLI
+
+- 根脚本 `scripts/hub-cli.mjs` 提供 `init`、`post`、`broadcast`、`read`、`ack`、`done`、`status`、`doctor`、`render`
+- 默认 hub 目录是 `/home/dungloi/Workspaces/codex-feishu-bridge-hub`
+- `CODEX_FEISHU_BRIDGE_HUB_ROOT` 可覆盖默认 hub 路径
+- `CODEX_HUB_AGENT` 可在 `read`、`ack`、`done` 中作为默认 agent 身份
+
+## Shared Hub File Contracts
+
+- `broadcast.jsonl`: 全局广播真源
+- `mailbox/<agent>.jsonl`: 单 agent 可见线程事件真源
+- `views/<agent>.md`: agent 直接阅读的 inbox 镜像
+- `views/broadcast.md`: operator 和 coordinator 阅读的广播视图
+- `config.json`: hub 版本、agent 集合、默认路径
+- `artifacts/`: 交接附件引用目录
 
 ## 容器规范
 

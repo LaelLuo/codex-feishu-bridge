@@ -1,18 +1,21 @@
 # Worktree Agents
 
-This file is the coordination source of truth for parallel agent execution in this repository.
-Use it when multiple agents are working in separate git worktrees at the same time.
+This file is the static coordination guide for parallel agent execution in this repository.
+Use it to define ownership, startup order, merge order, and the shared hub workflow.
+
+Repository docs are the stable rule source.
+The shared hub is the live message bus.
 
 ## Purpose
 
 - Split the remaining work into clear ownership boundaries.
-- Give agents a stable place to `@` each other without guessing who owns what.
 - Keep shared docs and merge order under control.
-- Provide copy-paste bootstrap prompts for new agents.
+- Provide one restartable workflow for five independent Codex CLI agents.
+- Move live handoffs out of branch-local files and into one shared hub.
 
 ## Read Order
 
-Every new agent must read these files before changing anything:
+Every new agent must read these sources before changing anything:
 
 1. `AGENTS.md`
 2. `docs/status.md`
@@ -21,6 +24,7 @@ Every new agent must read these files before changing anything:
 5. `docs/architecture.md`
 6. `docs/agents.md`
 7. `docs/worktree-agents.md`
+8. `/home/dungloi/Workspaces/codex-feishu-bridge-hub/views/<your-agent>.md` when the task is part of a multi-agent effort
 
 ## Worktree Naming
 
@@ -38,12 +42,114 @@ Recommended creation pattern:
 git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
 ```
 
+## Shared Hub
+
+Live coordination no longer happens through branch-local markdown files.
+All runtime handoffs, blockers, acknowledgements, and completion notices go through the shared hub:
+
+```text
+/home/dungloi/Workspaces/codex-feishu-bridge-hub
+```
+
+Hub layout:
+
+```text
+codex-feishu-bridge-hub/
+├── README.md
+├── config.json
+├── broadcast.jsonl
+├── mailbox/
+│   ├── coordinator-agent.jsonl
+│   ├── runtime-agent.jsonl
+│   ├── feishu-agent.jsonl
+│   ├── desktop-agent.jsonl
+│   └── qa-agent.jsonl
+├── views/
+│   ├── broadcast.md
+│   ├── coordinator-agent.md
+│   ├── runtime-agent.md
+│   ├── feishu-agent.md
+│   ├── desktop-agent.md
+│   └── qa-agent.md
+└── artifacts/
+```
+
+Rules:
+
+- `broadcast.jsonl` and `mailbox/*.jsonl` are append-only machine truth.
+- `views/*.md` are readable mirrors for agents.
+- Do not hand-edit hub `jsonl` files.
+- Use `node scripts/hub-cli.mjs ...` or the matching `npm run hub:*` script for all writes.
+- Stable project memory still lives in repo docs, not in the hub.
+
+## Startup and Resume Workflow
+
+Use these commands when launching or relaunching the agent set.
+
+### Initialize the Hub
+
+Run this once before restarting the agent set into the shared hub workflow:
+
+```bash
+cd /home/dungloi/Workspaces/codex-feishu-bridge
+npm run hub:init
+```
+
+### First Launch
+
+Recommended startup order:
+
+1. `@coordinator-agent`
+2. `@runtime-agent`
+3. `@desktop-agent`
+4. `@feishu-agent`
+5. `@qa-agent`
+
+Recommended approval and sandbox defaults:
+
+- `@coordinator-agent`: `-a never -s workspace-write`
+- `@runtime-agent`: `-a never -s danger-full-access`
+- `@desktop-agent`: `-a never -s workspace-write`
+- `@feishu-agent`: `-a never -s danger-full-access`
+- `@qa-agent`: `-a never -s workspace-write`
+
+Launch commands:
+
+```bash
+cd /home/dungloi/Workspaces/codex-feishu-bridge-coordinator && codex -a never -s workspace-write
+cd /home/dungloi/Workspaces/codex-feishu-bridge-runtime && codex -a never -s danger-full-access
+cd /home/dungloi/Workspaces/codex-feishu-bridge-desktop && codex -a never -s workspace-write
+cd /home/dungloi/Workspaces/codex-feishu-bridge-feishu && codex -a never -s danger-full-access
+cd /home/dungloi/Workspaces/codex-feishu-bridge-qa && codex -a never -s workspace-write
+```
+
+### Resume After Exit
+
+After hub cutover, reopen the same conversation state with `resume --last`:
+
+```bash
+cd /home/dungloi/Workspaces/codex-feishu-bridge-coordinator && codex -a never -s workspace-write resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-runtime && codex -a never -s danger-full-access resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-feishu && codex -a never -s danger-full-access resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-desktop && codex -a never -s workspace-write resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-qa && codex -a never -s workspace-write resume --last
+```
+
+### Operator Notes
+
+- Use one terminal per worktree.
+- Start `@coordinator-agent` first so shared docs and broadcasts have a single intake point.
+- Prefer `resume --last` over starting a fresh session when the agent already has context.
+- Reopen any agent that should stop asking for `Y` approvals with `-a never`.
+- Keep runtime and Feishu sessions on `danger-full-access` only when the task truly needs host-level freedom.
+- After restart, every agent should read its hub view before resuming implementation.
+
 ## Shared Rules
 
 - One agent owns one worktree and one primary capability area at a time.
 - Keep commits focused to one independently verifiable slice.
 - Use Docker for Node and TypeScript work unless the task explicitly targets host runtime behavior.
-- Do not edit another agent's owned feature files without a logged handoff or explicit reassignment.
+- Do not edit another agent's owned feature files without a logged hub handoff or explicit reassignment.
 - Shared coordination files are reserved to `@coordinator-agent` by default:
   - `docs/status.md`
   - `docs/plan.md`
@@ -51,7 +157,7 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - `docs/worktree-agents.md`
   - `AGENTS.md`
   - `docs/agents.md`
-- Feature agents may propose edits to shared docs through a mention or handoff block.
+- Feature agents may propose edits to shared docs, but dynamic requests and blockers must travel through the hub first.
 
 ## Ownership Matrix
 
@@ -73,6 +179,7 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - resolve ownership conflicts
   - collect blockers from other agents
   - decide merge order and readiness
+  - publish broadcasts and direct handoffs in the shared hub
 
 ### @runtime-agent
 
@@ -84,7 +191,7 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - `scripts/live-runtime-check.mjs`
 - May touch:
   - `apps/bridge-daemon/tests/**`
-  - `docs/architecture.md` for runtime interface updates
+  - `docs/architecture.md` for runtime interface updates through coordinator handoff
 - Must not lead:
   - Feishu product behavior changes
   - VSCode UI work
@@ -98,7 +205,7 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - Feishu-related webhook handling in `apps/bridge-daemon/src/server/http.ts`
 - May touch:
   - `apps/bridge-daemon/tests/feishu-*`
-  - `README.md` Feishu setup sections through coordinator or handoff
+  - `README.md` Feishu setup sections through coordinator handoff
 - Must not lead:
   - runtime adapter changes unrelated to Feishu payload needs
   - VSCode UI behavior
@@ -113,8 +220,8 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - `apps/vscode-extension/**`
   - `.vscode/launch.json`
 - May touch:
-  - `README.md` desktop workflow sections
-  - `docs/architecture.md` desktop UI sections
+  - `README.md` desktop workflow sections through coordinator handoff
+  - `docs/architecture.md` desktop UI sections through coordinator handoff
 - Must not lead:
   - daemon runtime protocol changes unless blocked by the desktop flow
   - Feishu ingress behavior
@@ -130,7 +237,7 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - execution reports requested by coordinator
 - May touch:
   - test files across modules with explicit slice boundaries
-  - `README.md` validation sections
+  - `README.md` validation sections through coordinator handoff
 - Must not lead:
   - product behavior changes
   - architectural reassignment
@@ -138,48 +245,41 @@ git worktree add ../codex-feishu-bridge-runtime -b agent/runtime
   - keep live validation repeatable
   - maintain acceptance evidence for runtime, desktop, and Feishu paths
 
-## Mention Protocol
+## Shared Hub Commands
 
-Use append-only blocks under `## Mentions`.
-Do not rewrite another agent's old mention block.
+The operator and agents use the following command set:
 
-Format:
-
-```md
-### 2026-03-17T20:10:00+08:00 @runtime-agent -> @desktop-agent [needs-input]
-- scope: websocket snapshot handling for live daemon status
-- blocking: yes
-- requested_action: confirm whether `awaiting-approval` and `blocked` render correctly in the task tree
-- artifacts:
-  - [task-store.ts](/home/dungloi/Workspaces/codex-feishu-bridge/apps/vscode-extension/src/core/task-store.ts)
-  - commit: `abc1234`
+```bash
+npm run hub:init
+npm run hub:status
+npm run hub:doctor
+npm run hub:read -- --agent feishu-agent
+npm run hub:broadcast -- --from coordinator-agent --summary "Hub cutover is active" --body "Read your hub view before coding."
+npm run hub:post -- --from coordinator-agent --to feishu-agent --kind handoff --summary "Validate live webhook flow" --body-file /tmp/body.md
+node scripts/hub-cli.mjs ack --agent feishu-agent --thread <thread-id> --summary "Accepted"
+node scripts/hub-cli.mjs done --agent feishu-agent --thread <thread-id> --summary "Completed"
 ```
 
-Allowed mention tags:
+Supported message kinds:
 
-- `[needs-input]`
-- `[blocked]`
-- `[handoff]`
-- `[fyi]`
-- `[decision-needed]`
-- `[ready-for-merge]`
+- `handoff`
+- `needs-input`
+- `blocked`
+- `ack`
+- `done`
+- `decision-needed`
+- `fyi`
+- `ready-for-merge`
+- `broadcast`
 
-## Handoff Protocol
+Hub usage rules:
 
-Use this block when one agent is intentionally passing a slice to another:
-
-```md
-### 2026-03-17T20:30:00+08:00 @feishu-agent -> @coordinator-agent [handoff]
-- completed:
-  - verified webhook signature path with real payload samples
-  - updated related daemon tests
-- remaining:
-  - real callback tunnel still needs user-provided URL
-- validation:
-  - `npm run test:daemon`
-- commits:
-  - `abcdef1`
-```
+- `post` is for direct agent-to-agent work requests.
+- `broadcast` is for whole-team operator or coordinator notices.
+- `ack` confirms the receiver has accepted a thread.
+- `done` closes a thread and signals the handoff is complete.
+- `status` is the coordinator's quick health view across all agent mailboxes.
+- `doctor` checks config, lock, parse validity, and missing hub files.
 
 ## Merge Order
 
@@ -213,16 +313,31 @@ Use this as the common prefix for any new agent:
 5. docs/architecture.md
 6. docs/agents.md
 7. docs/worktree-agents.md
+8. /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/<你的 agent 名称>.md
 
 硬规则：
 - Docker 是默认开发环境。
 - 不要把 OpenAI VSCode 扩展重新作为运行真身。
 - 你的 commit 必须使用 `gitmoji + conventional prefix`。
 - 每个 commit 只包含一个可独立验证的切片。
-- 如果需要跨边界协作，必须在 `docs/worktree-agents.md` 追加 `@agent-a -> @agent-b` mention 或 handoff。
+- 跨边界协作只能通过 shared hub，不要把 repo docs 当实时消息通道。
 - 不要静默修改共享协调文档，除非你的角色明确拥有它，或 coordinator 已经交接。
 
-你的目标是：先读取项目记忆，再只在你的职责边界内推进工作；遇到阻塞时，用 `docs/worktree-agents.md` 发 mention，而不是自己扩大范围。
+你的目标是：先读取项目记忆，再只在你的职责边界内推进工作；遇到阻塞时，用 hub CLI 发 handoff、blocked、needs-input 或 ack，而不是自己扩大范围。
+```
+
+## Post-Cutover Restart Message
+
+Use this as the first operator reminder after all five agents restart:
+
+```text
+从现在开始，动态交接和阻塞不再写到各自 worktree 的 docs/worktree-agents.md。
+
+你必须：
+1. 先读 AGENTS.md 和 repo docs。
+2. 再读 /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/<你的 agent>.md。
+3. 动态 handoff / blocked / ack / done 全部通过 hub CLI 完成。
+4. repo docs 只用于稳定规则、状态收口和架构沉淀。
 ```
 
 ## Role Prompts
@@ -247,12 +362,13 @@ Use this as the common prefix for any new agent:
 - 收拢共享文档
 - 追踪哪些工作已经 ready for merge
 - 避免多个 agent 同时修改同一类共享文件
+- 通过 shared hub 发布 handoff 和 broadcast
 
 你不应该主动承担 runtime、Feishu、VSCode 具体功能实现，除非用户重新分配职责。
 
 开工后先做三件事：
 1. 阅读全部项目记忆文档
-2. 检查 `docs/worktree-agents.md` 的 ownership 和 Mentions
+2. 阅读 /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/coordinator-agent.md
 3. 只更新协调文档，不写功能代码
 ```
 
@@ -280,7 +396,8 @@ Use this as the common prefix for any new agent:
 - VSCode 前端交互
 - 共享协调文档收口
 
-如果需要别的 agent 配合，必须在 `docs/worktree-agents.md` 追加 mention。
+开工前先读 /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/runtime-agent.md。
+如果需要别的 agent 配合，通过 shared hub 发消息，不要改 repo docs 当消息板。
 ```
 
 ### Prompt for @feishu-agent
@@ -304,7 +421,8 @@ Use this as the common prefix for any new agent:
 - VSCode UI
 - 共享状态文档收口
 
-缺少公网回调地址或真实凭证时，不要伪造完成；把阻塞写进 `docs/worktree-agents.md`。
+开工前先读 /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/feishu-agent.md。
+缺少公网回调地址或真实凭证时，不要伪造完成；通过 shared hub 标记 blocked。
 ```
 
 ### Prompt for @desktop-agent
@@ -327,7 +445,8 @@ Use this as the common prefix for any new agent:
 - daemon runtime 主适配
 - 共享协调文档
 
-若发现需要 runtime 变更，先 `@runtime-agent`，不要自行重写 daemon 契约。
+开工前先读 /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/desktop-agent.md。
+若发现需要 runtime 变更，先通过 shared hub 联系 `@runtime-agent`，不要自行重写 daemon 契约。
 ```
 
 ### Prompt for @qa-agent
@@ -350,49 +469,6 @@ Use this as the common prefix for any new agent:
 - 主导产品逻辑改动
 - 擅自重写架构
 
-如果发现某个模块无法验证，要明确指出缺失前提，而不是弱化验收标准。
+开工前先读 /home/dungloi/Workspaces/codex-feishu-bridge-hub/views/qa-agent.md。
+如果发现某个模块无法验证，要明确指出缺失前提，并通过 shared hub 回传 coordinator。
 ```
-
-## Agent Registry
-
-Use this section as the live registry for active worktrees.
-Update only your own block unless you are `@coordinator-agent`.
-
-### @coordinator-agent
-
-- worktree: `../codex-feishu-bridge-coordinator`
-- branch: `agent/coordinator`
-- status: `planned`
-- current_focus: `shared docs, merge order, blockers`
-
-### @runtime-agent
-
-- worktree: `../codex-feishu-bridge-runtime`
-- branch: `agent/runtime`
-- status: `planned`
-- current_focus: `live runtime and daemon turn-control validation`
-
-### @feishu-agent
-
-- worktree: `../codex-feishu-bridge-feishu`
-- branch: `agent/feishu`
-- status: `planned`
-- current_focus: `real webhook and threaded task routing validation`
-
-### @desktop-agent
-
-- worktree: `../codex-feishu-bridge-desktop`
-- branch: `agent/desktop`
-- status: `planned`
-- current_focus: `Extension Development Host live UI pass`
-
-### @qa-agent
-
-- worktree: `../codex-feishu-bridge-qa`
-- branch: `agent/qa`
-- status: `planned`
-- current_focus: `acceptance matrix and repeatable validation`
-
-## Mentions
-
-Append new mention blocks here.

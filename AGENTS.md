@@ -16,6 +16,7 @@ Before changing code or docs, agents must read these files in order:
 4. `docs/architecture.md`
 5. `docs/agents.md`
 6. `docs/worktree-agents.md` when the task is part of a multi-agent or multi-worktree effort
+7. `/home/dungloi/Workspaces/codex-feishu-bridge-hub/views/<agent>.md` when the task is part of the shared-hub workflow
 
 ## Working Rules
 
@@ -26,7 +27,8 @@ Before changing code or docs, agents must read these files in order:
 - Update `docs/status.md` whenever the implementation state changes materially.
 - Record architecture decisions in both `docs/architecture.md` and `docs/log.md`.
 - Prefer deleting weak or misleading compatibility paths over keeping them alive.
-- In multi-agent mode, use `docs/worktree-agents.md` as the coordination source of truth for ownership, mentions, and handoffs.
+- In multi-agent mode, use `docs/worktree-agents.md` as the static coordination source of truth for ownership and startup rules.
+- In multi-agent mode, use `/home/dungloi/Workspaces/codex-feishu-bridge-hub` as the live message bus for handoffs, blockers, acknowledgements, and done signals.
 
 ## Documentation Update Policy
 
@@ -35,7 +37,7 @@ Before changing code or docs, agents must read these files in order:
 - `docs/log.md`: append dated entries only.
 - `docs/lessons.md`: append dated lessons only.
 - `docs/agents.md`: keep operational instructions current for future agents.
-- `docs/worktree-agents.md`: keep ownership, mention templates, and bootstrap prompts current for multi-agent work.
+- `docs/worktree-agents.md`: keep ownership, shared-hub workflow, and bootstrap prompts current for multi-agent work.
 
 ## Commit Policy
 

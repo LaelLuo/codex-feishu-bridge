@@ -78,7 +78,7 @@ The historical root `PLAN.md` draft has been absorbed here and removed to avoid 
 
 The next iteration is not feature expansion.
 It is a live-validation pass against the real runtime, real Feishu ingress, and real desktop loading path.
-The recommended execution mode for this phase is parallel work across dedicated worktrees coordinated through `docs/worktree-agents.md`.
+The recommended execution mode for this phase is parallel work across dedicated worktrees coordinated through `docs/worktree-agents.md` and the sibling shared hub at `/home/dungloi/Workspaces/codex-feishu-bridge-hub`.
 
 ### Runtime and Auth Validation
 
@@ -144,13 +144,15 @@ The recommended execution mode for this phase is parallel work across dedicated 
 - Recommended owners:
   - `@coordinator-agent` for cross-agent planning, shared docs, and merge readiness
   - `@qa-agent` for validation scripts, acceptance matrix, and execution reports
-- Keep ownership, blockers, and handoffs in `docs/worktree-agents.md`.
+- Keep ownership and startup rules in `docs/worktree-agents.md`.
+- Keep live handoffs, blockers, acknowledgements, and done signals in the shared hub.
 
 ## Acceptance and Exit Criteria
 
 - Root `PLAN.md` no longer exists.
 - `docs/plan.md` remains the only plan source.
 - Existing regression checks still pass:
+  - `npm run test:hub`
   - `npm run test:protocol`
   - `npm run test:shared`
   - `npm run test:daemon`

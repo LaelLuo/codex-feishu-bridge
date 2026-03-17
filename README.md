@@ -20,6 +20,7 @@ The OpenAI VSCode extension is not the runtime authority for this project.
 - The bridge daemon, VSCode frontend, Feishu bridge, manual import flow, and recovery hardening are implemented in the local development path.
 - `docs/plan.md` is the only execution-plan source for the repository.
 - The current implementation focus is live validation, not new surface-area expansion.
+- Multi-agent live validation now uses a sibling shared hub instead of branch-local handoff docs.
 
 ## Quick Start
 
@@ -72,6 +73,51 @@ npm run validate:runtime:container
 ```
 
 9. Load `apps/vscode-extension` in VSCode to use the desktop task view and commands.
+
+## Shared Hub Workflow
+
+Use the shared hub when multiple Codex CLI agents are running in separate worktrees:
+
+1. Initialize the sibling hub once:
+
+```bash
+npm run hub:init
+```
+
+2. Check hub health and current thread status:
+
+```bash
+npm run hub:doctor
+npm run hub:status
+```
+
+3. Read one agent inbox view directly:
+
+```bash
+npm run hub:read -- --agent feishu-agent
+```
+
+4. Send a direct handoff:
+
+```bash
+npm run hub:post -- --from coordinator-agent --to feishu-agent --kind handoff --summary "Validate live webhook flow" --body "Use the real callback URL and report blocked conditions."
+```
+
+5. Send a whole-team broadcast:
+
+```bash
+npm run hub:broadcast -- --from coordinator-agent --summary "Hub cutover is active" --body "Read your inbox view before resuming work."
+```
+
+6. Acknowledge and close a thread:
+
+```bash
+node scripts/hub-cli.mjs ack --agent feishu-agent --thread <thread-id> --summary "Accepted"
+node scripts/hub-cli.mjs done --agent feishu-agent --thread <thread-id> --summary "Completed"
+```
+
+The default hub path is `/home/dungloi/Workspaces/codex-feishu-bridge-hub`.
+Override it with `CODEX_FEISHU_BRIDGE_HUB_ROOT` when needed.
 
 ## Live Validation Workflow
 
@@ -136,6 +182,25 @@ Then open the repository in VSCode and run the `Codex Feishu Bridge Extension` l
 - create or resume a task and verify task state, diffs, approvals, and uploads against the daemon
 
 9. Expose `/feishu/webhook` with a user-provided public URL and validate threaded message creation plus reply routing from a real Feishu chat.
+
+## Multi-Agent Restart Workflow
+
+After hub cutover, restart the five worktree agents and reopen the same conversation state:
+
+```bash
+cd /home/dungloi/Workspaces/codex-feishu-bridge-coordinator && codex -a never -s workspace-write resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-runtime && codex -a never -s danger-full-access resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-feishu && codex -a never -s danger-full-access resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-desktop && codex -a never -s workspace-write resume --last
+cd /home/dungloi/Workspaces/codex-feishu-bridge-qa && codex -a never -s workspace-write resume --last
+```
+
+After restart, each agent should:
+
+1. Read `AGENTS.md`
+2. Read the repo docs in the normal order
+3. Read `/home/dungloi/Workspaces/codex-feishu-bridge-hub/views/<agent>.md`
+4. Use the hub CLI for all dynamic handoffs and blocked states
 
 ## Runtime Notes
 

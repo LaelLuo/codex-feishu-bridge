@@ -12,6 +12,7 @@ This file is the detailed operational manual for agents working in this reposito
 4. Read `docs/log.md`.
 5. Read `docs/architecture.md` if interfaces or structure may change.
 6. Read `docs/worktree-agents.md` when the task belongs to a multi-agent or multi-worktree effort.
+7. Read `/home/dungloi/Workspaces/codex-feishu-bridge-hub/views/<agent>.md` when the task belongs to the shared-hub workflow.
 
 ## Execution Rules
 
@@ -21,7 +22,7 @@ This file is the detailed operational manual for agents working in this reposito
 - Avoid adding host-only setup instructions unless requested.
 - If a task changes architecture boundaries, update `docs/architecture.md` and `docs/log.md`.
 - Use Codex CLI and `codex app-server` as the runtime truth; do not restore the OpenAI VSCode extension as the primary runtime path.
-- In multi-agent mode, treat `docs/worktree-agents.md` as the ownership and mention registry.
+- In multi-agent mode, treat `docs/worktree-agents.md` as the static ownership registry and `/home/dungloi/Workspaces/codex-feishu-bridge-hub` as the live message bus.
 - Shared coordination files should be updated by `@coordinator-agent` unless a handoff explicitly assigns them elsewhere.
 
 ## Update Rules
@@ -30,7 +31,7 @@ This file is the detailed operational manual for agents working in this reposito
 - `docs/log.md` is append-only and date-based.
 - `docs/lessons.md` is append-only and used for corrective learning.
 - `docs/plan.md` tracks current phases and immediate next work.
-- `docs/worktree-agents.md` tracks role boundaries, mention threads, handoffs, and new-agent prompts.
+- `docs/worktree-agents.md` tracks role boundaries, shared-hub commands, and new-agent prompts.
 
 ## Commit and Review Defaults
 
@@ -47,5 +48,5 @@ This file is the detailed operational manual for agents working in this reposito
 
 - One agent owns one worktree and one primary capability area at a time.
 - Do not edit another agent's claimed feature files without a logged handoff or explicit reassignment.
-- Use the `@agent-a -> @agent-b` append-only mention format from `docs/worktree-agents.md` for blockers, requests, and handoffs.
-- If you discover a cross-cutting change, mention `@coordinator-agent` before widening your scope.
+- Use the shared hub CLI for blockers, requests, acknowledgements, and handoffs instead of editing branch-local docs as a message board.
+- If you discover a cross-cutting change, contact `@coordinator-agent` through the shared hub before widening your scope.
