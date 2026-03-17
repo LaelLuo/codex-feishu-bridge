@@ -102,6 +102,22 @@ function normalizeCommand(text: string): { command: string; args: string[] } {
   };
 }
 
+function summarizeIncomingMessage(
+  message: FeishuIncomingMessage | undefined,
+  sender: FeishuIncomingSender | undefined,
+): Record<string, string | undefined> {
+  return {
+    actorId: sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? sender?.sender_id?.union_id,
+    messageId: message?.message_id,
+    rootId: message?.root_id,
+    parentId: message?.parent_id,
+    threadId: message?.thread_id,
+    chatId: message?.chat_id,
+    messageType: message?.message_type,
+    textPreview: parseTextContent(message?.content).slice(0, 120) || undefined,
+  };
+}
+
 export class FeishuBridge {
   private readonly stateFile: string;
   private readonly processedEventIds = new Set<string>();
@@ -306,12 +322,20 @@ export class FeishuBridge {
       | FeishuIncomingSender
       | undefined,
   ): Promise<void> {
-    if (!message || message.message_type !== "text") {
+    const summary = summarizeIncomingMessage(message, sender);
+    if (!message) {
+      this.options.logger.info("ignoring feishu incoming event without message", summary);
+      return;
+    }
+
+    if (message.message_type !== "text") {
+      this.options.logger.info("ignoring non-text feishu message", summary);
       return;
     }
 
     const lookupId = message.root_id ?? message.parent_id ?? message.thread_id ?? message.message_id;
     if (!lookupId) {
+      this.options.logger.info("ignoring feishu incoming text without lookup id", summary);
       return;
     }
 
@@ -320,12 +344,22 @@ export class FeishuBridge {
       .listTasks()
       .find((candidate) => candidate.feishuBinding?.rootMessageId === lookupId || candidate.feishuBinding?.threadKey === lookupId);
     if (!task) {
+      this.options.logger.info("no feishu task binding matched incoming message", {
+        ...summary,
+        lookupId,
+      });
       return;
     }
 
     const actorId = sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? sender?.sender_id?.union_id ?? "unknown";
     const text = parseTextContent(message.content);
     const { command, args } = normalizeCommand(text);
+    this.options.logger.info("routing feishu incoming message", {
+      ...summary,
+      lookupId,
+      taskId: task.taskId,
+      command: command || "message",
+    });
 
     switch (command) {
       case "interrupt":
@@ -379,6 +413,10 @@ export class FeishuBridge {
           const dedupeId =
             message?.message_id ?? message?.root_id ?? message?.parent_id ?? sender?.sender_id?.open_id;
           if (dedupeId && this.processedEventIds.has(dedupeId)) {
+            this.options.logger.info("deduped feishu long-connection message", {
+              ...summarizeIncomingMessage(message, sender),
+              dedupeId,
+            });
             return;
           }
 

@@ -93,6 +93,35 @@ function extractMessagePayload(data: {
   };
 }
 
+function parsePreview(rawContent: string | undefined): string | undefined {
+  if (!rawContent) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(rawContent) as { text?: string };
+    return parsed.text?.trim().slice(0, 120) ?? rawContent.trim().slice(0, 120);
+  } catch {
+    return rawContent.trim().slice(0, 120);
+  }
+}
+
+function summarizeIncomingPayload(
+  message: FeishuIncomingMessage | undefined,
+  sender: FeishuIncomingSender | undefined,
+): Record<string, string | undefined> {
+  return {
+    actorId: sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? sender?.sender_id?.union_id,
+    messageId: message?.message_id,
+    rootId: message?.root_id,
+    parentId: message?.parent_id,
+    threadId: message?.thread_id,
+    chatId: message?.chat_id,
+    messageType: message?.message_type,
+    textPreview: parsePreview(message?.content),
+  };
+}
+
 export function createFeishuLongConnectionFactory(
   sdk: LarkSdkLike = Lark as unknown as LarkSdkLike,
 ): LongConnectionFactory {
@@ -116,6 +145,7 @@ export function createFeishuLongConnectionFactory(
         sender?: FeishuIncomingSender;
       }) => {
         const payload = extractMessagePayload(data);
+        logger.info("received feishu long-connection event", summarizeIncomingPayload(payload.message, payload.sender));
         await onMessage(payload.message, payload.sender);
       },
     });
