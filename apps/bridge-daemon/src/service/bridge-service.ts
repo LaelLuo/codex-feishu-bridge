@@ -41,6 +41,8 @@ import type {
 const SYSTEM_TASK_ID = "system";
 const ACTIVE_TURN_START_TIMEOUT_MS = 8_000;
 const ACTIVE_TURN_RETRY_INTERVAL_MS = 250;
+const AGGREGATED_DIFF_PATH = "__aggregated_diff__";
+const AGENT_DIFF_SUMMARY = "Extracted from agent diff block";
 
 interface PersistedState {
   seq: number;
@@ -88,7 +90,9 @@ interface PendingTurnStart {
 }
 
 function cloneTask(task: BridgeTask): BridgeTask {
-  return structuredClone(task);
+  const clonedTask = structuredClone(task);
+  hydrateTaskDiffs(clonedTask);
+  return clonedTask;
 }
 
 function cloneSnapshot(snapshot: BridgeServiceSnapshot): BridgeServiceSnapshot {
@@ -202,6 +206,114 @@ function conversationContentFromInput(input: CodexInputItem[]): { content: strin
           : "",
     imageAssetPaths,
   };
+}
+
+function normalizeDiffHeaderPath(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "/dev/null") {
+    return undefined;
+  }
+
+  const withoutTimestamp = trimmed.split("\t")[0] ?? trimmed;
+  if (withoutTimestamp.startsWith("a/") || withoutTimestamp.startsWith("b/")) {
+    return withoutTimestamp.slice(2);
+  }
+
+  return withoutTimestamp;
+}
+
+function extractDiffPath(patch: string): string | undefined {
+  let afterPath: string | undefined;
+  let beforePath: string | undefined;
+
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++ ")) {
+      afterPath = normalizeDiffHeaderPath(line.slice(4));
+    }
+    if (line.startsWith("--- ")) {
+      beforePath = normalizeDiffHeaderPath(line.slice(4));
+    }
+  }
+
+  return afterPath ?? beforePath;
+}
+
+function splitDiffSections(patch: string): string[] {
+  const normalized = patch.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const lines = normalized.split("\n");
+  const sections: string[] = [];
+  let current: string[] = [];
+  let seenDiffHeader = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const nextLine = lines[index + 1] ?? "";
+    const startsNewSection =
+      line.startsWith("diff --git ") || (line.startsWith("--- ") && nextLine.startsWith("+++ "));
+
+    if (startsNewSection && current.length > 0 && seenDiffHeader) {
+      sections.push(current.join("\n").trimEnd());
+      current = [];
+      seenDiffHeader = false;
+    }
+
+    current.push(line);
+    if (line.startsWith("--- ") && nextLine.startsWith("+++ ")) {
+      seenDiffHeader = true;
+    }
+  }
+
+  if (current.length > 0) {
+    sections.push(current.join("\n").trimEnd());
+  }
+
+  return sections;
+}
+
+function extractTaskDiffsFromText(text: string): TaskDiffEntry[] {
+  const entries: TaskDiffEntry[] = [];
+  const blockPattern = /```diff\s*\n([\s\S]*?)```/g;
+
+  for (const match of text.matchAll(blockPattern)) {
+    const patch = (match[1] ?? "").trim();
+    if (!patch) {
+      continue;
+    }
+
+    const sections = splitDiffSections(patch);
+    if (sections.length === 0) {
+      continue;
+    }
+
+    for (const section of sections) {
+      entries.push({
+        path: extractDiffPath(section) ?? AGGREGATED_DIFF_PATH,
+        summary: AGENT_DIFF_SUMMARY,
+        patch: section,
+      });
+    }
+  }
+
+  return entries;
+}
+
+function canReplaceTaskDiffs(task: BridgeTask): boolean {
+  return task.diffs.length === 0 || task.diffs.every((diff) => diff.path === AGGREGATED_DIFF_PATH);
+}
+
+function hydrateTaskDiffs(task: BridgeTask): void {
+  if (!task.latestSummary || !canReplaceTaskDiffs(task)) {
+    return;
+  }
+
+  const extractedDiffs = extractTaskDiffsFromText(task.latestSummary);
+  if (extractedDiffs.length > 0) {
+    task.diffs = extractedDiffs;
+  }
 }
 
 export class BridgeService {
@@ -580,7 +692,7 @@ export class BridgeService {
         }
         task.diffs = [
           {
-            path: "__aggregated_diff__",
+            path: AGGREGATED_DIFF_PATH,
             summary: params.turnId ? `Aggregated diff for ${params.turnId}` : "Aggregated diff",
             patch: params.diff,
           },
@@ -715,6 +827,7 @@ export class BridgeService {
           createdAt: new Date().toISOString(),
         });
         task.latestSummary = text || task.latestSummary;
+        hydrateTaskDiffs(task);
         break;
       }
       case "fileChange": {
