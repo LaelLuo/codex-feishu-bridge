@@ -6,7 +6,7 @@ workspace_root="${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}"
 git_file="${workspace_root}/.git"
 mirror_root="/opt/host-workspaces"
 
-if [[ -r "${git_file}" && -d "${mirror_root}" ]]; then
+if [[ -f "${git_file}" && -r "${git_file}" && -d "${mirror_root}" ]]; then
   gitdir_path="$(sed -n 's/^gitdir: //p' "${git_file}" | head -n 1)"
   if [[ "${gitdir_path}" == /* ]]; then
     repo_root="$(dirname "$(dirname "$(dirname "${gitdir_path}")")")"
