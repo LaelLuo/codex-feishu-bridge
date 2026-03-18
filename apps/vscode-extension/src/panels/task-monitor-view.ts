@@ -27,6 +27,10 @@ interface TaskMonitorPanelOptions {
   deleteLocalTask: (taskId: string) => Promise<void>;
 }
 
+interface MonitorConfirmOption extends vscode.QuickPickItem {
+  confirmed?: boolean;
+}
+
 function nonce(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -135,11 +139,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
           return;
         }
         case "forget-imported-tasks": {
-          const confirmed = await vscode.window.showWarningMessage(
-            "Clear all imported local tasks from the bridge monitor? Host Codex threads in ~/.codex will be kept.",
-            { modal: true },
-            "Clear Imported Local Tasks",
-          );
+          const confirmed = await this.confirmMonitorAction({
+            title: "Remove Imported Tasks",
+            prompt: "Remove all imported local tasks from the monitor while keeping the underlying Codex threads on disk?",
+            confirmLabel: "Remove Imported Tasks",
+            confirmDescription: "Only the monitor records will be removed.",
+          });
           if (!confirmed) {
             return;
           }
@@ -287,11 +292,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
           if (!task || task.feishuBinding) {
             return;
           }
-          const confirmed = await vscode.window.showWarningMessage(
-            "Forget this local task record from the bridge monitor? The underlying host Codex thread will not be deleted.",
-            { modal: true },
-            "Forget Local Task",
-          );
+          const confirmed = await this.confirmMonitorAction({
+            title: "Remove From Monitor",
+            prompt: "Remove this task from the monitor while keeping the underlying Codex thread on disk?",
+            confirmLabel: "Remove From Monitor",
+            confirmDescription: "The underlying Codex thread will stay on this computer.",
+          });
           if (!confirmed) {
             return;
           }
@@ -307,11 +313,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
           if (tasks.length === 0) {
             return;
           }
-          const confirmed = await vscode.window.showWarningMessage(
-            `Forget ${tasks.length} local task record(s) from the bridge monitor? The underlying host Codex threads will not be deleted.`,
-            { modal: true },
-            "Forget Selected Local Tasks",
-          );
+          const confirmed = await this.confirmMonitorAction({
+            title: "Remove Selected Tasks",
+            prompt: `Remove ${tasks.length} selected task(s) from the monitor while keeping the underlying Codex threads on disk?`,
+            confirmLabel: "Remove Selected Tasks",
+            confirmDescription: "Only the monitor records will be removed.",
+          });
           if (!confirmed) {
             return;
           }
@@ -329,11 +336,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
           if (!task || task.feishuBinding) {
             return;
           }
-          const confirmed = await vscode.window.showWarningMessage(
-            "Delete this local task from the bridge monitor and permanently remove the underlying host Codex thread from this computer?",
-            { modal: true },
-            "Delete Local Task",
-          );
+          const confirmed = await this.confirmMonitorAction({
+            title: "Delete Codex Thread",
+            prompt: "Permanently delete this task and its underlying Codex thread from this computer?",
+            confirmLabel: "Delete Codex Thread",
+            confirmDescription: "This permanently removes the underlying local thread data.",
+          });
           if (!confirmed) {
             return;
           }
@@ -349,11 +357,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
           if (tasks.length === 0) {
             return;
           }
-          const confirmed = await vscode.window.showWarningMessage(
-            `Delete ${tasks.length} local task(s) from the bridge monitor and permanently remove the underlying host Codex threads from this computer?`,
-            { modal: true },
-            "Delete Selected Local Tasks",
-          );
+          const confirmed = await this.confirmMonitorAction({
+            title: "Delete Selected Threads",
+            prompt: `Permanently delete ${tasks.length} selected task(s) and their underlying Codex threads from this computer?`,
+            confirmLabel: "Delete Selected Threads",
+            confirmDescription: "This permanently removes the underlying local thread data.",
+          });
           if (!confirmed) {
             return;
           }
@@ -381,6 +390,35 @@ export class TaskMonitorPanel implements vscode.Disposable {
       return undefined;
     }
     return this.options.store.getTask(taskId);
+  }
+
+  private async confirmMonitorAction(params: {
+    title: string;
+    prompt: string;
+    confirmLabel: string;
+    confirmDescription: string;
+  }): Promise<boolean> {
+    const selection = await vscode.window.showQuickPick<MonitorConfirmOption>(
+      [
+        {
+          label: params.confirmLabel,
+          description: params.confirmDescription,
+          confirmed: true,
+        },
+        {
+          label: "Cancel",
+          description: "Leave everything unchanged.",
+          confirmed: false,
+        },
+      ],
+      {
+        title: params.title,
+        placeHolder: params.prompt,
+        ignoreFocusOut: true,
+      },
+    );
+
+    return selection?.confirmed === true;
   }
 
   private async setSelectedTask(taskId?: string, markAsUserSelection = true): Promise<void> {
@@ -1130,8 +1168,8 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <button data-action="toggle-multi-select" title="Leave multi-select mode and hide the task checkboxes.">Done</button>
               <button data-action="select-visible-local-tasks" title="Select every visible local-only task in the current list." \${selection.availableCount > 0 ? "" : "disabled"}>Select Visible Local</button>
               <button data-action="clear-local-task-selection" title="Clear the current multi-select choice without changing any tasks." \${selection.selectedCount > 0 ? "" : "disabled"}>Clear Selection</button>
-              <button data-action="forget-local-tasks" title="Remove the selected local-only task records from the monitor while keeping the underlying Codex threads on disk." \${selection.selectedCount > 0 ? "" : "disabled"}>Forget Selected</button>
-              <button class="danger" data-action="delete-local-tasks" title="Permanently delete the selected local-only tasks and their underlying Codex threads from this computer." \${selection.selectedCount > 0 ? "" : "disabled"}>Delete Selected</button>
+              <button data-action="forget-local-tasks" title="Remove the selected local-only task records from the monitor while keeping the underlying Codex threads on disk." \${selection.selectedCount > 0 ? "" : "disabled"}>Remove Selected</button>
+              <button class="danger" data-action="delete-local-tasks" title="Permanently delete the selected local-only tasks and their underlying Codex threads from this computer." \${selection.selectedCount > 0 ? "" : "disabled"}>Delete Selected Threads</button>
             </div>
           </div>
         \`;
@@ -1440,8 +1478,8 @@ export class TaskMonitorPanel implements vscode.Disposable {
                 <button data-action="retry" title="Ask Codex to retry the last turn and keep working on the same task.">Retry Last Turn</button>
                 <button \${task.feishuBinding ? "disabled" : ""} data-action="bind-new-feishu-topic" title="Create a new topic in the default Feishu group and bind this task to it for mobile follow-up.">Bind to New Feishu Topic</button>
                 <button \${task.feishuBinding ? "" : "disabled"} data-action="unbind" title="Detach this task from its current Feishu thread without deleting local task data.">Unbind Feishu</button>
-                <button \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task" title="Remove this local task record from the monitor but keep the underlying Codex thread on disk.">Forget Local Copy</button>
-                <button class="danger" \${task.canForgetLocalTask ? "" : "disabled"} data-action="delete-local-task" title="Permanently delete this local task and its underlying Codex thread from this computer.">Delete Local Copy</button>
+                <button \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task" title="Remove this task from the monitor but keep the underlying Codex thread on disk.">Remove From Monitor</button>
+                <button class="danger" \${task.canForgetLocalTask ? "" : "disabled"} data-action="delete-local-task" title="Permanently delete this task and its underlying Codex thread from this computer.">Delete Codex Thread</button>
               </div>
             </div>
             \${task.latestSummary ? \`<div class="panel" style="margin-top: 12px; padding: 12px;"><div class="eyebrow">Latest Summary</div>\${pre(task.latestSummary)}</div>\` : ""}
