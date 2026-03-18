@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export type CodexBackendMode = "mock" | "stdio";
+export type CodexBackendMode = "mock" | "stdio" | "socket-proxy";
 
 export interface Logger {
   info(message: string, metadata?: unknown): void;
@@ -19,6 +19,7 @@ export interface BridgeConfig {
   codexHome: string;
   uploadsDir: string;
   codexBackend: CodexBackendMode;
+  codexRuntimeProxySocket: string;
   codexExecutable: string;
   codexArgs: string[];
   publicBaseUrl?: string;
@@ -88,6 +89,10 @@ export function loadBridgeConfig(
       env.BRIDGE_UPLOADS_DIR ?? path.join(".tmp", "uploads"),
     ),
     codexBackend: (env.CODEX_RUNTIME_BACKEND as CodexBackendMode | undefined) ?? "mock",
+    codexRuntimeProxySocket: resolveWorkspacePath(
+      workspaceRoot,
+      env.CODEX_RUNTIME_PROXY_SOCKET ?? path.join(".tmp", "codex-runtime-proxy.sock"),
+    ),
     codexExecutable: env.CODEX_APP_SERVER_BIN ?? "codex",
     codexArgs: (env.CODEX_APP_SERVER_ARGS ?? "app-server")
       .split(" ")

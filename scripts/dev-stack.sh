@@ -8,6 +8,10 @@ env_example="${repo_root}/docker/.env.example"
 env_file="${repo_root}/docker/.env"
 workspace_dir="/workspace/codex-feishu-bridge"
 extension_dev_path="${repo_root}/apps/vscode-extension"
+runtime_proxy_dir="${repo_root}/.tmp/runtime-proxy"
+runtime_proxy_pid_file="${runtime_proxy_dir}/codex-runtime-proxy.pid"
+runtime_proxy_log_file="${runtime_proxy_dir}/codex-runtime-proxy.log"
+runtime_proxy_default_socket="${workspace_dir}/.tmp/codex-runtime-proxy.sock"
 command="${1:-up}"
 
 compose() {
@@ -17,6 +21,13 @@ compose() {
 require_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required for this project." >&2
+    exit 1
+  fi
+}
+
+require_host_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "node is required when CODEX_RUNTIME_BACKEND=socket-proxy." >&2
     exit 1
   fi
 }
@@ -36,6 +47,25 @@ read_bridge_port() {
     port="$(sed -n 's/^BRIDGE_PORT=//p' "${env_file}" | tail -n 1)"
   fi
   echo "${port:-8787}"
+}
+
+read_env_value() {
+  local key="$1"
+  if [[ ! -f "${env_file}" ]]; then
+    return
+  fi
+
+  sed -n "s/^${key}=//p" "${env_file}" | tail -n 1
+}
+
+read_runtime_backend() {
+  local backend=""
+  backend="$(read_env_value CODEX_RUNTIME_BACKEND)"
+  echo "${backend:-mock}"
+}
+
+runtime_proxy_enabled() {
+  [[ "$(read_runtime_backend)" == "socket-proxy" ]]
 }
 
 hash_file() {
@@ -66,7 +96,172 @@ resolve_code_bin() {
     fi
   done
 
-  echo "" 
+  echo ""
+}
+
+load_env_file() {
+  ensure_env_file
+  set -a
+  # shellcheck disable=SC1090
+  source "${env_file}"
+  set +a
+}
+
+resolve_host_path_from_workspace() {
+  local current="${1:-}"
+  if [[ -z "${current}" ]]; then
+    echo ""
+    return
+  fi
+
+  if [[ "${current}" == "${workspace_dir}"* ]]; then
+    echo "${repo_root}${current#${workspace_dir}}"
+    return
+  fi
+
+  echo "${current}"
+}
+
+resolve_runtime_proxy_socket_host_path() {
+  local current="${1:-}"
+  if [[ -z "${current}" ]] || [[ "${current}" == "${runtime_proxy_default_socket}" ]]; then
+    echo "${repo_root}/.tmp/codex-runtime-proxy.sock"
+    return
+  fi
+
+  resolve_host_path_from_workspace "${current}"
+}
+
+resolve_host_codex_home() {
+  local current="${1:-}"
+  if [[ -n "${HOST_CODEX_HOME:-}" ]]; then
+    echo "${HOST_CODEX_HOME}"
+    return
+  fi
+
+  if [[ -z "${current}" ]] || [[ "${current}" == "/codex-home" ]] || [[ "${current}" == "${workspace_dir}/.tmp/codex-home" ]]; then
+    echo "${HOME}/.codex"
+    return
+  fi
+
+  resolve_host_path_from_workspace "${current}"
+}
+
+resolve_host_codex_bin() {
+  local current="${1:-}"
+  if [[ -n "${HOST_CODEX_BIN_DIR:-}" ]]; then
+    echo "${HOST_CODEX_BIN_DIR}/bin/codex.js"
+    return
+  fi
+
+  if [[ -z "${current}" ]] || [[ "${current}" == "/opt/host-codex-bin/bin/codex.js" ]]; then
+    echo "codex"
+    return
+  fi
+
+  echo "${current}"
+}
+
+runtime_proxy_pid() {
+  if [[ -f "${runtime_proxy_pid_file}" ]]; then
+    cat "${runtime_proxy_pid_file}"
+  fi
+}
+
+runtime_proxy_is_running() {
+  local pid
+  pid="$(runtime_proxy_pid)"
+  [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1
+}
+
+cleanup_runtime_proxy_pid_file() {
+  rm -f "${runtime_proxy_pid_file}"
+}
+
+stop_runtime_proxy() {
+  local pid
+  pid="$(runtime_proxy_pid)"
+  if [[ -z "${pid}" ]]; then
+    cleanup_runtime_proxy_pid_file
+    return
+  fi
+
+  if ! kill -0 "${pid}" >/dev/null 2>&1; then
+    cleanup_runtime_proxy_pid_file
+    return
+  fi
+
+  kill "${pid}" >/dev/null 2>&1 || true
+  for _ in $(seq 1 50); do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      cleanup_runtime_proxy_pid_file
+      return
+    fi
+    sleep 0.2
+  done
+
+  kill -9 "${pid}" >/dev/null 2>&1 || true
+  cleanup_runtime_proxy_pid_file
+}
+
+stop_runtime_proxy_if_running() {
+  if runtime_proxy_is_running; then
+    echo "[setup] Stopping host Codex runtime proxy..."
+    stop_runtime_proxy
+  else
+    cleanup_runtime_proxy_pid_file
+  fi
+}
+
+wait_for_socket() {
+  local socket_path="$1"
+
+  echo "[setup] Waiting for host Codex runtime proxy socket at ${socket_path}..."
+  for _ in $(seq 1 60); do
+    if [[ -S "${socket_path}" ]]; then
+      echo "[setup] Host Codex runtime proxy is ready."
+      return
+    fi
+    sleep 1
+  done
+
+  echo "host Codex runtime proxy did not become ready in time." >&2
+  if [[ -f "${runtime_proxy_log_file}" ]]; then
+    echo "--- host Codex runtime proxy log ---" >&2
+    tail -n 40 "${runtime_proxy_log_file}" >&2 || true
+  fi
+  exit 1
+}
+
+start_runtime_proxy_if_needed() {
+  if ! runtime_proxy_enabled; then
+    stop_runtime_proxy_if_running
+    return
+  fi
+
+  require_host_node
+  stop_runtime_proxy_if_running
+
+  local runtime_proxy_socket
+  runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+
+  echo "[setup] Starting host Codex runtime proxy..."
+  mkdir -p "${runtime_proxy_dir}" "$(dirname "${runtime_proxy_socket}")" "${repo_root}/.tmp"
+  (
+    cd "${repo_root}"
+    load_env_file
+    export WORKSPACE_PATH="${repo_root}"
+    export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
+    export BRIDGE_CODEX_HOME="$(resolve_host_codex_home "${BRIDGE_CODEX_HOME:-}")"
+    export CODEX_HOME="${BRIDGE_CODEX_HOME}"
+    export CODEX_APP_SERVER_BIN="$(resolve_host_codex_bin "${CODEX_APP_SERVER_BIN:-}")"
+    : > "${runtime_proxy_log_file}"
+    nohup node "${repo_root}/apps/bridge-daemon/dist/runtime-socket-proxy.js" </dev/null >> "${runtime_proxy_log_file}" 2>&1 &
+    disown "$!" >/dev/null 2>&1 || true
+    printf '%s\n' "$!" > "${runtime_proxy_pid_file}"
+  )
+
+  wait_for_socket "${runtime_proxy_socket}"
 }
 
 start_workspace_dev() {
@@ -146,6 +341,10 @@ wait_for_health() {
   done
 
   echo "bridge-runtime did not become healthy in time." >&2
+  if runtime_proxy_enabled && [[ -f "${runtime_proxy_log_file}" ]]; then
+    echo "--- host Codex runtime proxy log ---" >&2
+    tail -n 40 "${runtime_proxy_log_file}" >&2 || true
+  fi
   exit 1
 }
 
@@ -160,6 +359,14 @@ print_summary() {
 - Start the VSCode extension with F5 on "Codex Feishu Bridge Extension"
 - The Extension Development Host will open the monitor automatically
 EOF
+
+  if runtime_proxy_enabled; then
+    local runtime_proxy_socket
+    runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+    cat <<EOF
+- Host Codex runtime proxy: ${runtime_proxy_socket}
+EOF
+  fi
 }
 
 open_monitor() {
@@ -191,6 +398,7 @@ command_up() {
   start_workspace_dev
   install_dependencies
   build_artifacts
+  start_runtime_proxy_if_needed
   start_runtime
   wait_for_health
   print_summary
@@ -205,6 +413,7 @@ command_down() {
   require_docker
   ensure_env_file
   compose down
+  stop_runtime_proxy_if_running
 }
 
 command_status() {
@@ -224,11 +433,27 @@ command_status() {
   else
     echo "Health endpoint is not reachable at ${url}."
   fi
+
+  if runtime_proxy_enabled || [[ -f "${runtime_proxy_pid_file}" ]]; then
+    local runtime_proxy_socket
+    runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+    echo
+    if runtime_proxy_is_running; then
+      echo "Host Codex runtime proxy: running (pid $(runtime_proxy_pid))"
+    else
+      echo "Host Codex runtime proxy: stopped"
+    fi
+    echo "Socket: ${runtime_proxy_socket}"
+    echo "Log file: ${runtime_proxy_log_file}"
+  fi
 }
 
 command_logs() {
   require_docker
   ensure_env_file
+  if runtime_proxy_enabled || [[ -f "${runtime_proxy_pid_file}" ]]; then
+    echo "[info] Host Codex runtime proxy log: ${runtime_proxy_log_file}" >&2
+  fi
   compose logs -f bridge-runtime
 }
 

@@ -9,7 +9,7 @@ import {
   type RawCodexThreadDescriptor,
   type RawCodexTurnDescriptor,
 } from "./json-rpc-codex-runtime-shared";
-import { JsonRpcStdioClient } from "./json-rpc-stdio-client";
+import { JsonRpcSocketClient } from "./json-rpc-socket-client";
 import type {
   CodexAccountSnapshot,
   CodexApprovalPolicy,
@@ -17,7 +17,6 @@ import type {
   CodexLoginStartParams,
   CodexLoginStartResult,
   CodexModelDescriptor,
-  CodexReasoningEffort,
   CodexRateLimitSnapshot,
   CodexRuntime,
   CodexRuntimeHealth,
@@ -27,15 +26,15 @@ import type {
   CodexThreadDescriptor,
 } from "./types";
 
-export class StdioCodexRuntime implements CodexRuntime {
-  readonly backend = "stdio";
-  private readonly client: JsonRpcStdioClient;
+export class SocketProxyCodexRuntime implements CodexRuntime {
+  readonly backend = "socket-proxy";
+  private readonly client: JsonRpcSocketClient;
 
   constructor(
     private readonly config: BridgeConfig,
     logger: Logger,
   ) {
-    this.client = new JsonRpcStdioClient(config, logger);
+    this.client = new JsonRpcSocketClient(config, logger);
   }
 
   async start(): Promise<void> {
@@ -115,7 +114,7 @@ export class StdioCodexRuntime implements CodexRuntime {
     threadId: string;
     input: CodexInputItem[];
     model?: string;
-    effort?: CodexReasoningEffort;
+    effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
     approvalPolicy?: CodexApprovalPolicy;
     planMode?: boolean;
   }): Promise<CodexTurnDescriptor> {
