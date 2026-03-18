@@ -10,7 +10,7 @@ It is designed for developers who want to start, inspect, and control Codex work
 The repository is built around three product surfaces:
 
 - `Codex CLI + codex app-server` as the real task runtime and auth layer
-- `VSCode extension` as the desktop UI for task lists, diffs, approvals, and uploads
+- `VSCode extension` as a graphical monitor for Feishu-bound Codex tasks
 - `Feishu` as the mobile conversation and control surface
 
 The OpenAI VSCode extension is not required as the runtime authority for this project.
@@ -19,7 +19,7 @@ The OpenAI VSCode extension is not required as the runtime authority for this pr
 
 - CLI-first runtime with `codex app-server`
 - Docker-first TypeScript development workflow
-- VSCode task tree, detail panel, diff view, approvals, and image upload
+- VSCode persistent monitor sidebar, task highlighting, diff view, approvals, and desktop handoff messaging
 - Feishu long-connection bridge with pure-thread conversations
 - Card-first Feishu task creation and control
 - Manual import and resume support for existing Codex threads
@@ -104,7 +104,7 @@ Inside `workspace-dev`, use:
 BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 ```
 
-## VSCode Usage
+## VSCode Monitor
 
 Build the extension:
 
@@ -114,14 +114,19 @@ npm run build:extension
 
 Then open the repository in VSCode and run the `Codex Feishu Bridge Extension` launch target from [`.vscode/launch.json`](../.vscode/launch.json).
 
-The extension provides:
+The extension is positioned as a **graphical monitor for Feishu task threads**. The recommended desktop workflow is:
 
-- task tree
-- task detail view
-- diff opening
-- status view
-- desktop approval handling
-- image upload
+1. Start or continue the task from Feishu.
+2. Use `Feishu Task List` to inspect all daemon tasks and quickly identify Feishu-bound ones.
+3. Use the persistent `Feishu Task Monitor` sidebar to inspect:
+   - task status, workspace, thread id, and Feishu binding
+   - conversation timeline with `feishu` / `vscode` / `runtime` source tags
+   - pending approvals
+   - diff summaries
+4. Continue the task from the monitor's persistent composer instead of a popup input box.
+5. Handle interrupt, retry, approvals, diff opening, and unbind actions from the same sidebar.
+
+Desktop-origin messages are not mirrored back into Feishu as user text. For Feishu-bound tasks, the monitor exposes a task-level toggle that controls whether the resulting agent reply should continue syncing back to the Feishu thread.
 
 ## Feishu Usage
 
@@ -240,7 +245,7 @@ Slash commands remain available as compatibility fallbacks, but card interaction
 
 - `bridge-daemon` is the local bridge orchestrator.
 - `codex app-server` is managed by the daemon and provides the thread runtime.
-- VSCode connects to the daemon over localhost HTTP and WebSocket.
+- The VSCode monitor connects to the daemon over localhost HTTP and WebSocket.
 - The selected Feishu live path now uses the official SDK long-connection client instead of a public callback URL.
 - `/feishu/webhook` remains available as a compatibility ingress when webhook credentials are still configured.
 - The daemon now exposes `/tasks`, `/tasks/import`, `/tasks/:id/resume`, `/tasks/:id/messages`, `/tasks/:id/uploads`, `/tasks/:id/approvals/*`, and `/feishu/webhook`.
@@ -294,7 +299,7 @@ Slash commands remain available as compatibility fallbacks, but card interaction
 
 ## Repository Map
 
-- `apps/vscode-extension`: desktop frontend for tasks, approvals, diffs, and image inputs
+- `apps/vscode-extension`: graphical monitor and desktop handoff surface for Feishu task threads
 - `apps/bridge-daemon`: daemon runtime that owns Codex sessions and Feishu routing
 - `packages/protocol`: shared bridge task, event, approval, and transport contracts
 - `packages/shared`: shared config, filesystem, and transport helpers

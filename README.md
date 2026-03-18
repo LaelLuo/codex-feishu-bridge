@@ -10,7 +10,7 @@
 整个仓库围绕三个产品面展开：
 
 - `Codex CLI + codex app-server`：真实任务运行时与认证层
-- `VSCode extension`：桌面端任务列表、diff、审批、图片上传与状态视图
+- `VSCode extension`：飞书对话任务的图形化监视器，用于桌面端持续监控、接管与审批
 - `Feishu`：移动端对话、控制与任务配置入口
 
 当前推荐的移动端工作流是：
@@ -25,7 +25,7 @@
 
 - 基于 `codex app-server` 的 CLI-first 运行时
 - Docker-first 的 TypeScript 开发方式
-- VSCode 任务树、详情面板、diff 查看、审批与图片上传
+- VSCode 常驻监视器视图、任务树高亮、diff 查看、审批与桌面接管输入
 - 飞书 long-connection 接入
 - 飞书 card-first 任务创建与控制
 - 已有 Codex 线程的导入与恢复能力
@@ -120,7 +120,7 @@ npm run validate:runtime
 BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 ```
 
-## VSCode 使用方式
+## VSCode 图形化监视器
 
 先构建扩展：
 
@@ -130,14 +130,19 @@ npm run build:extension
 
 然后在 VSCode 打开仓库，并运行 [`.vscode/launch.json`](./.vscode/launch.json) 中的 `Codex Feishu Bridge Extension`。
 
-扩展当前提供：
+扩展现在定位为 **Feishu 对话任务的图形化监视器**。推荐桌面工作流是：
 
-- 任务树
-- 任务详情面板
-- diff 打开
-- 状态视图
-- 桌面端审批处理
-- 图片上传
+1. 在飞书里发起或推进任务线程
+2. 在 VSCode 左侧 `Feishu Task List` 中观察全部任务，并优先关注已绑定飞书线程的任务
+3. 在 `Feishu Task Monitor` 常驻侧栏里查看：
+   - 任务状态、workspace、threadId、Feishu 绑定信息
+   - 会话消息流与消息来源（`feishu` / `vscode` / `runtime`）
+   - pending approvals
+   - diff 摘要
+4. 直接在监视器底部的常驻输入框里发消息，不再依赖弹窗输入框
+5. 在监视器里处理中断、重试、审批、diff 打开和解绑
+
+桌面端发起的消息默认不会被镜像成飞书里的用户原文；但对于已经绑定飞书线程的任务，你可以在监视器里切换“桌面回复继续同步回飞书”的任务级开关。
 
 ## 飞书使用方式
 
@@ -255,7 +260,7 @@ slash 命令仍然保留为兼容兜底，但不再是推荐主路径。
 
 - `bridge-daemon` 是本地桥接编排器
 - `codex app-server` 由 daemon 托管，负责真实线程运行
-- VSCode 通过 localhost HTTP/WebSocket 与 daemon 通信
+- VSCode 监视器通过 localhost HTTP/WebSocket 与 daemon 通信
 - 当前推荐的飞书 live path 是官方 SDK long-connection，而不是公网回调 URL
 - `/feishu/webhook` 仍可作为兼容入口保留
 - daemon 会暴露 `/tasks`、`/tasks/import`、`/tasks/:id/resume`、`/tasks/:id/messages`、`/tasks/:id/uploads`、`/tasks/:id/approvals/*` 和 `/feishu/webhook`
@@ -268,7 +273,7 @@ slash 命令仍然保留为兼容兜底，但不再是推荐主路径。
 
 ## 仓库地图
 
-- `apps/vscode-extension`：桌面端任务、审批、diff、图片输入
+- `apps/vscode-extension`：飞书任务图形化监视器与桌面接管入口
 - `apps/bridge-daemon`：daemon 运行时与 Feishu 路由
 - `packages/protocol`：共享任务、事件、审批与传输协议
 - `packages/shared`：共享配置、文件系统与传输工具
