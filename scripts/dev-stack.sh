@@ -13,6 +13,9 @@ runtime_proxy_pid_file="${runtime_proxy_dir}/codex-runtime-proxy.pid"
 runtime_proxy_log_file="${runtime_proxy_dir}/codex-runtime-proxy.log"
 runtime_proxy_default_socket="${workspace_dir}/.tmp/codex-runtime-proxy.sock"
 command="${1:-up}"
+requested_backend="${2:-}"
+created_env_file=0
+autofilled_entries=()
 
 compose() {
   docker compose -f "${compose_file}" --env-file "${env_file}" "$@"
@@ -25,6 +28,18 @@ require_docker() {
   fi
 }
 
+validate_requested_backend() {
+  case "${requested_backend}" in
+    ""|stdio|socket-proxy)
+      ;;
+    *)
+      echo "Unsupported runtime mode: ${requested_backend}" >&2
+      echo "Expected one of: stdio, socket-proxy" >&2
+      exit 1
+      ;;
+  esac
+}
+
 require_host_node() {
   if ! command -v node >/dev/null 2>&1; then
     echo "node is required when CODEX_RUNTIME_BACKEND=socket-proxy." >&2
@@ -32,13 +47,37 @@ require_host_node() {
   fi
 }
 
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'
+}
+
+record_env_update() {
+  autofilled_entries+=("$1=$2")
+}
+
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local escaped_value
+
+  escaped_value="$(escape_sed_replacement "${value}")"
+  if grep -q "^${key}=" "${env_file}"; then
+    sed -i "s|^${key}=.*|${key}=${escaped_value}|" "${env_file}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >> "${env_file}"
+  fi
+}
+
 ensure_env_file() {
   if [[ -f "${env_file}" ]]; then
+    autofill_env_file
     return
   fi
 
   cp "${env_example}" "${env_file}"
+  created_env_file=1
   echo "[setup] Created docker/.env from docker/.env.example"
+  autofill_env_file
 }
 
 read_bridge_port() {
@@ -62,6 +101,27 @@ read_runtime_backend() {
   local backend=""
   backend="$(read_env_value CODEX_RUNTIME_BACKEND)"
   echo "${backend:-mock}"
+}
+
+determine_runtime_backend() {
+  local backend=""
+
+  if [[ -n "${requested_backend}" ]]; then
+    echo "${requested_backend}"
+    return
+  fi
+
+  backend="$(read_env_value CODEX_RUNTIME_BACKEND)"
+  if [[ -n "${backend}" ]]; then
+    if [[ "${created_env_file}" -eq 1 && "${backend}" == "mock" ]]; then
+      echo "stdio"
+      return
+    fi
+    echo "${backend}"
+    return
+  fi
+
+  echo "stdio"
 }
 
 runtime_proxy_enabled() {
@@ -130,6 +190,132 @@ resolve_runtime_proxy_socket_host_path() {
   fi
 
   resolve_host_path_from_workspace "${current}"
+}
+
+detect_host_codex_home() {
+  echo "${HOME}/.codex"
+}
+
+detect_host_codex_bin_dir() {
+  local codex_command=""
+  local resolved_command=""
+  local npm_root=""
+
+  if [[ -n "${HOST_CODEX_BIN_DIR:-}" ]] && [[ -d "${HOST_CODEX_BIN_DIR}" ]]; then
+    echo "${HOST_CODEX_BIN_DIR}"
+    return
+  fi
+
+  codex_command="$(command -v codex 2>/dev/null || true)"
+  if [[ -n "${codex_command}" ]] && command -v node >/dev/null 2>&1; then
+    resolved_command="$(
+      node -p "const fs=require('fs'); try { process.stdout.write(fs.realpathSync(process.argv[1])) } catch { process.exit(1) }" \
+        "${codex_command}" 2>/dev/null || true
+    )"
+    if [[ "${resolved_command}" == */bin/codex.js ]]; then
+      dirname "$(dirname "${resolved_command}")"
+      return
+    fi
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    npm_root="$(npm root -g 2>/dev/null || true)"
+    if [[ -d "${npm_root}/@openai/codex" ]]; then
+      echo "${npm_root}/@openai/codex"
+      return
+    fi
+  fi
+
+  echo ""
+}
+
+sync_env_value_from_shell() {
+  local key="$1"
+  local current=""
+  local candidate=""
+
+  current="$(read_env_value "${key}")"
+  candidate="${!key:-}"
+  if [[ -z "${current}" && -n "${candidate}" ]]; then
+    set_env_value "${key}" "${candidate}"
+    record_env_update "${key}" "${candidate}"
+  fi
+}
+
+report_env_autofill() {
+  local entry
+
+  if [[ "${#autofilled_entries[@]}" -eq 0 ]]; then
+    return
+  fi
+
+  echo "[setup] Auto-filled docker/.env:"
+  for entry in "${autofilled_entries[@]}"; do
+    echo "  - ${entry}"
+  done
+}
+
+autofill_env_file() {
+  local backend=""
+  local current=""
+  local host_codex_home=""
+  local host_codex_bin_dir=""
+
+  backend="$(determine_runtime_backend)"
+  host_codex_home="$(detect_host_codex_home)"
+  host_codex_bin_dir="$(detect_host_codex_bin_dir)"
+
+  current="$(read_env_value BRIDGE_CODEX_HOME)"
+  if [[ -z "${current}" || "${current}" == "${workspace_dir}/.tmp/codex-home" ]]; then
+    set_env_value BRIDGE_CODEX_HOME "/codex-home"
+    record_env_update "BRIDGE_CODEX_HOME" "/codex-home"
+  fi
+
+  current="$(read_env_value HOST_CODEX_HOME)"
+  if [[ -z "${current}" || "${current}" == "../.tmp/codex-home" ]]; then
+    set_env_value HOST_CODEX_HOME "${host_codex_home}"
+    record_env_update "HOST_CODEX_HOME" "${host_codex_home}"
+  fi
+
+  current="$(read_env_value HOST_CODEX_BIN_DIR)"
+  if [[ -n "${host_codex_bin_dir}" ]] && [[ -z "${current}" || "${current}" == "/tmp" ]]; then
+    set_env_value HOST_CODEX_BIN_DIR "${host_codex_bin_dir}"
+    record_env_update "HOST_CODEX_BIN_DIR" "${host_codex_bin_dir}"
+  fi
+
+  current="$(read_env_value CODEX_RUNTIME_BACKEND)"
+  if [[ "${current}" != "${backend}" ]]; then
+    set_env_value CODEX_RUNTIME_BACKEND "${backend}"
+    record_env_update "CODEX_RUNTIME_BACKEND" "${backend}"
+  fi
+
+  current="$(read_env_value CODEX_APP_SERVER_BIN)"
+  if [[ -n "${host_codex_bin_dir}" ]] && [[ -z "${current}" || "${current}" == "codex" ]]; then
+    set_env_value CODEX_APP_SERVER_BIN "/opt/host-codex-bin/bin/codex.js"
+    record_env_update "CODEX_APP_SERVER_BIN" "/opt/host-codex-bin/bin/codex.js"
+  fi
+
+  current="$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)"
+  if [[ "${backend}" == "socket-proxy" ]] && [[ -z "${current}" ]]; then
+    set_env_value CODEX_RUNTIME_PROXY_SOCKET "${runtime_proxy_default_socket}"
+    record_env_update "CODEX_RUNTIME_PROXY_SOCKET" "${runtime_proxy_default_socket}"
+  fi
+
+  current="$(read_env_value MOCK_AUTO_COMPLETE_LOGIN)"
+  if [[ "${backend}" != "mock" ]] && [[ -z "${current}" || "${current}" == "true" ]]; then
+    set_env_value MOCK_AUTO_COMPLETE_LOGIN "false"
+    record_env_update "MOCK_AUTO_COMPLETE_LOGIN" "false"
+  fi
+
+  sync_env_value_from_shell FEISHU_APP_ID
+  sync_env_value_from_shell FEISHU_APP_SECRET
+  sync_env_value_from_shell FEISHU_VERIFICATION_TOKEN
+  sync_env_value_from_shell FEISHU_ENCRYPT_KEY
+  sync_env_value_from_shell FEISHU_DEFAULT_CHAT_ID
+  sync_env_value_from_shell FEISHU_DEFAULT_CHAT_NAME
+  sync_env_value_from_shell PUBLIC_BASE_URL
+
+  report_env_autofill
 }
 
 resolve_host_codex_home() {
@@ -459,22 +645,27 @@ command_logs() {
 
 case "${command}" in
   up)
+    validate_requested_backend
     command_up
     ;;
   down)
+    validate_requested_backend
     command_down
     ;;
   status)
+    validate_requested_backend
     command_status
     ;;
   logs)
+    validate_requested_backend
     command_logs
     ;;
   monitor)
+    validate_requested_backend
     command_monitor
     ;;
   *)
-    echo "Usage: scripts/dev-stack.sh [up|down|status|logs|monitor]" >&2
+    echo "Usage: scripts/dev-stack.sh [up|down|status|logs|monitor] [stdio|socket-proxy]" >&2
     exit 1
     ;;
 esac

@@ -129,7 +129,9 @@
 ## CLI 包装器
 
 - 根脚本 `scripts/bridge-cli.mjs` 提供 `list`、`import`、`resume`、`send`
-- 根脚本 `scripts/dev-stack.sh` 提供 `up`、`monitor`、`down`、`status`、`logs` 的一键开发环境启动入口
+- 根脚本 `scripts/dev-stack.sh` 提供 `up`、`monitor`、`down`、`status`、`logs` 的一键开发环境启动入口，并会在首次运行时自动创建、补齐 `docker/.env`
+- `scripts/dev-stack.sh up|monitor` 可选附带 `stdio` 或 `socket-proxy` 参数，用来显式切换 Docker-host 权限模式
+- 根 `package.json` 提供 `start:socket-proxy`、`monitor:socket-proxy` 等 npm 包装命令，用于不手改 `.env` 的一键启动
 - 当 `CODEX_RUNTIME_BACKEND=socket-proxy` 时，`scripts/dev-stack.sh up` / `monitor` 会先在宿主机启动一个薄的 `codex app-server` socket proxy，再拉起容器内 `bridge-runtime`
 - 在 `workspace-dev` 容器里使用时，daemon 地址默认应设为 `BRIDGE_BASE_URL=http://bridge-runtime:8787`
 

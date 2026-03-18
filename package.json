@@ -13,7 +13,11 @@
   },
   "scripts": {
     "start:all": "bash ./scripts/dev-stack.sh up",
+    "start:stdio": "bash ./scripts/dev-stack.sh up stdio",
+    "start:socket-proxy": "bash ./scripts/dev-stack.sh up socket-proxy",
     "monitor:all": "bash ./scripts/dev-stack.sh monitor",
+    "monitor:stdio": "bash ./scripts/dev-stack.sh monitor stdio",
+    "monitor:socket-proxy": "bash ./scripts/dev-stack.sh monitor socket-proxy",
     "stop:all": "bash ./scripts/dev-stack.sh down",
     "status:all": "bash ./scripts/dev-stack.sh status",
     "logs:all": "bash ./scripts/dev-stack.sh logs",
