@@ -14,10 +14,10 @@ import {
   type BridgeTask,
   type ConversationMessage,
   type FeishuThreadBinding,
-  type ImageAsset,
   type MessageAuthor,
   type MessageSurface,
   type QueuedApproval,
+  type TaskAsset,
   type TaskExecutionProfile,
   type TaskDiffEntry,
   type TaskStatus,
@@ -66,6 +66,7 @@ export interface CreateTaskRequest {
   title: string;
   workspaceRoot?: string;
   prompt?: string;
+  assetIds?: string[];
   imageAssetIds?: string[];
   executionProfile?: TaskExecutionProfile;
   source?: MessageSurface;
@@ -74,23 +75,27 @@ export interface CreateTaskRequest {
 
 export interface TaskMessageRequest {
   content: string;
+  assetIds?: string[];
   imageAssetIds?: string[];
+  executionProfile?: TaskExecutionProfile;
   source?: MessageSurface;
   replyToFeishu?: boolean;
 }
 
 export interface TaskSettingsRequest {
   desktopReplySyncToFeishu?: boolean;
+  executionProfile?: TaskExecutionProfile;
 }
 
-export interface UploadImageRequest {
+export interface UploadAssetRequest {
   fileName: string;
   mimeType: string;
   contentBase64: string;
+  kind?: TaskAsset["kind"];
 }
 
-export interface UploadImageResult {
-  asset: ImageAsset;
+export interface UploadAssetResult {
+  asset: TaskAsset;
   task: BridgeTask;
 }
 
@@ -107,6 +112,8 @@ interface PendingTurnStart {
 interface PendingConversationSource {
   surface: MessageSurface;
   replyToFeishu: boolean;
+  content: string;
+  assetIds: string[];
 }
 
 interface ImportedConversationRefreshResult {
@@ -138,6 +145,7 @@ function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): T
     ...(profile?.effort ? { effort: profile.effort } : {}),
     ...(profile?.sandbox ? { sandbox: profile.sandbox } : {}),
     ...(profile?.approvalPolicy ? { approvalPolicy: profile.approvalPolicy } : {}),
+    ...(profile?.planMode ? { planMode: true } : {}),
   };
 }
 
@@ -165,19 +173,23 @@ function taskOriginFromSource(
 
 function hydratePersistedTask(task: BridgeTask): BridgeTask {
   const hydratedTask = structuredClone(task);
+  hydratedTask.assets = normalizeTaskAssets(hydratedTask);
   hydratedTask.taskOrigin = normalizeTaskOrigin(task.taskOrigin, task.mode);
   hydratedTask.executionProfile = normalizeExecutionProfile(task.executionProfile);
   hydratedTask.desktopReplySyncToFeishu = task.desktopReplySyncToFeishu ?? Boolean(task.feishuBinding);
   hydratedTask.feishuBindingDisabled = task.feishuBindingDisabled ?? false;
+  hydratedTask.conversation = hydratedTask.conversation.map(normalizeConversationMessage);
   hydrateTaskDiffs(hydratedTask);
   return hydratedTask;
 }
 
 function cloneTask(task: BridgeTask): BridgeTask {
   const clonedTask = structuredClone(task);
+  clonedTask.assets = normalizeTaskAssets(clonedTask);
   clonedTask.taskOrigin = normalizeTaskOrigin(clonedTask.taskOrigin, clonedTask.mode);
   clonedTask.executionProfile = normalizeExecutionProfile(clonedTask.executionProfile);
   clonedTask.desktopReplySyncToFeishu = clonedTask.desktopReplySyncToFeishu ?? Boolean(clonedTask.feishuBinding);
+  clonedTask.conversation = clonedTask.conversation.map(normalizeConversationMessage);
   hydrateTaskDiffs(clonedTask);
   return clonedTask;
 }
@@ -188,6 +200,40 @@ function cloneSnapshot(snapshot: BridgeServiceSnapshot): BridgeServiceSnapshot {
 
 function sanitizeFileName(fileName: string): string {
   return fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function assetKindFromMimeType(mimeType: string): TaskAsset["kind"] {
+  return mimeType.startsWith("image/") ? "image" : "file";
+}
+
+function normalizeTaskAssets(task: BridgeTask): TaskAsset[] {
+  const assets =
+    task.assets ??
+    (
+      task as BridgeTask & {
+        imageAssets?: Array<Partial<TaskAsset> & { assetId?: string; localPath?: string; mimeType?: string; createdAt?: string }>;
+      }
+    ).imageAssets ??
+    [];
+
+  return assets
+    .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset?.assetId && asset.localPath && asset.mimeType && asset.createdAt))
+    .map((asset) => ({
+      assetId: asset.assetId,
+      kind: asset.kind ?? assetKindFromMimeType(asset.mimeType),
+      displayName: asset.displayName ?? path.basename(asset.localPath),
+      localPath: asset.localPath,
+      mimeType: asset.mimeType,
+      createdAt: asset.createdAt,
+    }));
+}
+
+function normalizeConversationMessage(message: ConversationMessage): ConversationMessage {
+  const legacyAssetIds = (message as ConversationMessage & { imageAssetIds?: string[] }).imageAssetIds;
+  return {
+    ...message,
+    assetIds: message.assetIds ?? legacyAssetIds ?? [],
+  };
 }
 
 function mapRuntimeStatus(status: unknown): TaskStatus {
@@ -314,6 +360,40 @@ function conversationContentFromInput(input: CodexInputItem[]): { content: strin
           : "",
     imageAssetPaths,
   };
+}
+
+function formatAssetOnlyMessage(assets: TaskAsset[]): string {
+  if (assets.length === 0) {
+    return "";
+  }
+
+  if (assets.length === 1) {
+    const [asset] = assets;
+    return asset.kind === "image" ? "[image attachment]" : "[file attachment]";
+  }
+
+  const imageCount = assets.filter((asset) => asset.kind === "image").length;
+  const fileCount = assets.length - imageCount;
+  const parts: string[] = [];
+  if (imageCount > 0) {
+    parts.push(`${imageCount} image${imageCount === 1 ? "" : "s"}`);
+  }
+  if (fileCount > 0) {
+    parts.push(`${fileCount} file${fileCount === 1 ? "" : "s"}`);
+  }
+  return `[${parts.join(", ")} attached]`;
+}
+
+function buildAttachedFilesPrompt(files: TaskAsset[]): string {
+  if (files.length === 0) {
+    return "";
+  }
+
+  return [
+    "Attached local file paths:",
+    ...files.map((asset) => `- ${asset.displayName}: ${asset.localPath}`),
+    "Read the files from disk if you need their contents.",
+  ].join("\n");
 }
 
 function normalizeDiffHeaderPath(value: string): string | undefined {
@@ -695,10 +775,12 @@ export class BridgeService {
     await this.persistState();
     this.emitEvent(task.taskId, "task.created", { task: cloneTask(task) });
 
-    if (request.prompt?.trim() || request.imageAssetIds?.length) {
+    const assetIds = request.assetIds ?? request.imageAssetIds ?? [];
+    if (request.prompt?.trim() || assetIds.length) {
       task = await this.sendMessage(task.taskId, {
         content: request.prompt ?? "",
-        imageAssetIds: request.imageAssetIds,
+        assetIds,
+        executionProfile: request.executionProfile,
         source: request.source,
         replyToFeishu: request.replyToFeishu,
       });
@@ -739,20 +821,29 @@ export class BridgeService {
 
   async sendMessage(taskId: string, request: TaskMessageRequest): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
+    if (request.executionProfile) {
+      task.executionProfile = normalizeExecutionProfile(request.executionProfile);
+    }
+
     const input = this.buildInputItems(task, request);
     const messageSource = request.source ?? "runtime";
     const replyToFeishu =
       request.replyToFeishu ??
       (messageSource === "feishu" ? true : task.feishuBinding ? task.desktopReplySyncToFeishu : false);
+    const assetIds = request.assetIds ?? request.imageAssetIds ?? [];
     this.enqueueConversationSource(task.taskId, {
       surface: messageSource,
       replyToFeishu,
+      content: request.content.trim(),
+      assetIds,
     });
 
     if (task.activeTurnId && task.status === "running") {
       this.turnReplyPolicies.set(task.activeTurnId, {
         surface: messageSource,
         replyToFeishu,
+        content: request.content.trim(),
+        assetIds,
       });
       await this.steerActiveTurn(task.threadId, task.activeTurnId, input);
       this.emitEvent(task.taskId, "task.steered", {
@@ -763,6 +854,8 @@ export class BridgeService {
       const pendingReplyPolicy = {
         surface: messageSource,
         replyToFeishu,
+        content: request.content.trim(),
+        assetIds,
       } satisfies PendingConversationSource;
       this.enqueuePendingTurnReplyPolicy(task.taskId, pendingReplyPolicy);
       await this.resumeImportedTaskBeforeMessage(task);
@@ -772,6 +865,7 @@ export class BridgeService {
         model: task.executionProfile.model,
         effort: task.executionProfile.effort,
         approvalPolicy: task.executionProfile.approvalPolicy,
+        planMode: task.executionProfile.planMode,
       });
       this.trackPendingTurnStart(turn.id);
       this.turnReplyPolicies.set(turn.id, pendingReplyPolicy);
@@ -816,7 +910,7 @@ export class BridgeService {
     return cloneTask(task);
   }
 
-  async uploadTaskImage(taskId: string, request: UploadImageRequest): Promise<UploadImageResult> {
+  async uploadTaskAsset(taskId: string, request: UploadAssetRequest): Promise<UploadAssetResult> {
     const task = this.requireTask(taskId);
     const assetId = `asset_${randomUUID()}`;
     const taskUploadDir = path.join(this.options.config.uploadsDir, taskId);
@@ -826,17 +920,19 @@ export class BridgeService {
     await ensureDir(taskUploadDir);
     await writeFile(targetFile, Buffer.from(request.contentBase64, "base64"));
 
-    const asset: ImageAsset = {
+    const asset: TaskAsset = {
       assetId,
+      kind: request.kind ?? assetKindFromMimeType(request.mimeType),
+      displayName: request.fileName,
       localPath: targetFile,
       mimeType: request.mimeType,
       createdAt: new Date().toISOString(),
     };
 
-    task.imageAssets = [...task.imageAssets, asset];
+    task.assets = [...normalizeTaskAssets(task), asset];
     this.touchTask(task);
     await this.persistState();
-    this.emitEvent(task.taskId, "task.image.added", {
+    this.emitEvent(task.taskId, "task.asset.added", {
       taskId: task.taskId,
       asset,
     });
@@ -923,6 +1019,9 @@ export class BridgeService {
     if (typeof request.desktopReplySyncToFeishu === "boolean") {
       task.desktopReplySyncToFeishu = request.desktopReplySyncToFeishu;
     }
+    if (request.executionProfile) {
+      task.executionProfile = normalizeExecutionProfile(request.executionProfile);
+    }
     this.touchTask(task);
     await this.persistState();
     this.emitEvent(task.taskId, "task.updated", {
@@ -958,19 +1057,28 @@ export class BridgeService {
 
   private buildInputItems(task: BridgeTask, request: TaskMessageRequest): CodexInputItem[] {
     const items: CodexInputItem[] = [];
-    if (request.content.trim()) {
+    const assetIds = request.assetIds ?? request.imageAssetIds ?? [];
+    const assets = assetIds.map((assetId) => {
+      const asset = normalizeTaskAssets(task).find((entry) => entry.assetId === assetId);
+      if (!asset) {
+        throw new Error(`Unknown attachment asset: ${assetId}`);
+      }
+      return asset;
+    });
+
+    const images = assets.filter((asset) => asset.kind === "image");
+    const files = assets.filter((asset) => asset.kind === "file");
+    const filePrompt = buildAttachedFilesPrompt(files);
+    const textParts = [request.content.trim(), filePrompt].filter(Boolean);
+
+    if (textParts.length > 0) {
       items.push({
         type: "text",
-        text: request.content.trim(),
+        text: textParts.join("\n\n"),
       });
     }
 
-    for (const assetId of request.imageAssetIds ?? []) {
-      const asset = task.imageAssets.find((entry) => entry.assetId === assetId);
-      if (!asset) {
-        throw new Error(`Unknown image asset: ${assetId}`);
-      }
-
+    for (const asset of images) {
       items.push({
         type: "localImage",
         path: asset.localPath,
@@ -978,7 +1086,7 @@ export class BridgeService {
     }
 
     if (items.length === 0) {
-      throw new Error("Message request must include text or image assets.");
+      throw new Error("Message request must include text, images, or files.");
     }
 
     return items;
@@ -1257,16 +1365,28 @@ export class BridgeService {
       case "userMessage": {
         const inputContent = "content" in item ? item.content : [];
         const { content, imageAssetPaths } = conversationContentFromInput(inputContent);
-        const source = this.dequeueConversationSource(task.taskId)?.surface ?? "runtime";
+        const source = this.dequeueConversationSource(task.taskId);
+        const sourceAssets = (source?.assetIds ?? [])
+          .map((assetId) => normalizeTaskAssets(task).find((asset) => asset.assetId === assetId))
+          .filter((asset): asset is TaskAsset => Boolean(asset));
         this.upsertConversation(task, {
           messageId: item.id,
           author: "user",
-          surface: source,
-          content,
+          surface: source?.surface ?? "runtime",
+          content:
+            source?.content ||
+            content ||
+            formatAssetOnlyMessage(
+              sourceAssets.length
+                ? sourceAssets
+                : normalizeTaskAssets(task).filter((asset) => imageAssetPaths.includes(asset.localPath)),
+            ),
           createdAt: new Date().toISOString(),
-          imageAssetIds: task.imageAssets
-            .filter((asset) => imageAssetPaths.includes(asset.localPath))
-            .map((asset) => asset.assetId),
+          assetIds:
+            source?.assetIds ??
+            normalizeTaskAssets(task)
+              .filter((asset) => imageAssetPaths.includes(asset.localPath))
+              .map((asset) => asset.assetId),
         });
         break;
       }

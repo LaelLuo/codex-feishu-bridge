@@ -243,6 +243,7 @@ export class MockCodexRuntime implements CodexRuntime {
     model?: string;
     effort?: CodexReasoningEffort;
     approvalPolicy?: CodexApprovalPolicy;
+    planMode?: boolean;
   }): Promise<CodexTurnDescriptor> {
     const threadState = this.requireThread(params.threadId);
     const turnId = `turn_${randomUUID()}`;

@@ -11,7 +11,7 @@ import {
   type CreateTaskRequest,
   type TaskSettingsRequest,
   type TaskMessageRequest,
-  type UploadImageRequest,
+  type UploadAssetRequest,
 } from "../service/bridge-service";
 
 interface BridgeHttpServerOptions {
@@ -126,6 +126,13 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/models") {
+        sendJson(response, 200, {
+          models: await service.listModels(),
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/tasks") {
         const tasks = await service.syncRuntimeThreads();
         sendJson(response, 200, {
@@ -206,7 +213,8 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
           const body = await readJsonBody<TaskMessageRequest>(request);
           const task = await service.sendMessage(taskId, {
             content: body.content ?? "",
-            imageAssetIds: body.imageAssetIds ?? [],
+            assetIds: body.assetIds ?? body.imageAssetIds ?? [],
+            executionProfile: body.executionProfile,
             source: body.source,
             replyToFeishu: body.replyToFeishu,
           });
@@ -228,8 +236,8 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
         }
 
         if (request.method === "POST" && segments.length === 3 && segments[2] === "uploads") {
-          const body = await readJsonBody<UploadImageRequest>(request);
-          const result = await service.uploadTaskImage(taskId, body);
+          const body = await readJsonBody<UploadAssetRequest>(request);
+          const result = await service.uploadTaskAsset(taskId, body);
           sendJson(response, 201, result);
           return;
         }

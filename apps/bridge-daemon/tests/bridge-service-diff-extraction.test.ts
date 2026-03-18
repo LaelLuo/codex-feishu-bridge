@@ -244,7 +244,7 @@ describe("bridge service diff extraction compatibility", () => {
       status: "completed",
       pendingApprovals: [],
       diffs: [],
-      imageAssets: [],
+      assets: [],
       conversation: [],
       createdAt: "2026-03-17T00:00:00.000Z",
       updatedAt: "2026-03-17T00:00:00.000Z",

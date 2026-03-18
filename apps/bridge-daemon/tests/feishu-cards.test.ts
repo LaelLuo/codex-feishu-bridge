@@ -17,10 +17,12 @@ describe("feishu card builders", () => {
       prompt: "Inspect the current bridge task state.",
       model: "gpt-5.4",
       effort: "high",
+      planMode: true,
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
       binding: BINDING,
       revision: 3,
+      attachmentSummary: "1 photo",
       modelOptions: [
         {
           id: "gpt-5.4",
@@ -64,11 +66,13 @@ describe("feishu card builders", () => {
       prompt: "Inspect the current bridge task state.",
       model: "gpt-5.4",
       effort: "high",
+      planMode: true,
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
       binding: BINDING,
       revision: 3,
       note: "Model updated from the card.",
+      attachmentSummary: "1 photo",
       modelOptions: [
         {
           id: "gpt-5.4",
@@ -112,6 +116,15 @@ describe("feishu card builders", () => {
       binding: BINDING,
       revision: 2,
       note: "Queued retry for task.",
+      modelOptions: [
+        {
+          id: "gpt-5.4",
+          displayName: "GPT-5.4",
+          isDefault: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          defaultReasoningEffort: "medium",
+        },
+      ],
     });
 
     const draftJson = JSON.stringify(draftCard);
@@ -121,9 +134,11 @@ describe("feishu card builders", () => {
     assert.match(draftJson, /Create on Host/);
     assert.match(draftJson, /Reset to Defaults/);
     assert.match(draftJson, /Discard Draft/);
+    assert.match(draftJson, /Plan Mode: On/);
     assert.match(draftJson, /Latest Update/);
 
     assert.match(taskJson, /How this thread works/);
+    assert.match(taskJson, /Plan Mode: Off/);
     assert.match(taskJson, /View Status/);
     assert.match(taskJson, /Stop Turn/);
     assert.match(taskJson, /Retry Last Turn/);

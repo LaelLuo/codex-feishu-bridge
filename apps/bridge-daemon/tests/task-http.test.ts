@@ -150,7 +150,7 @@ describe("bridge daemon task http server", () => {
         },
         body: JSON.stringify({
           content: "Please summarize the attachment",
-          imageAssetIds: [upload.asset.assetId],
+          assetIds: [upload.asset.assetId],
           source: "vscode",
           replyToFeishu: false,
         }),
@@ -226,7 +226,7 @@ describe("bridge daemon task http server", () => {
             entry !== null &&
             (entry as { type?: string }).type === "event" &&
             ((entry as { event?: { kind?: string } }).event?.kind === "approval.requested" ||
-              (entry as { event?: { kind?: string } }).event?.kind === "task.image.added"),
+              (entry as { event?: { kind?: string } }).event?.kind === "task.asset.added"),
         ),
       );
     } finally {

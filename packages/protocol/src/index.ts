@@ -26,7 +26,7 @@ export type BridgeEventKind =
   | "task.message.sent"
   | "task.steered"
   | "task.diff.updated"
-  | "task.image.added"
+  | "task.asset.added"
   | "approval.requested"
   | "approval.resolved"
   | "feishu.thread.bound"
@@ -41,6 +41,7 @@ export type MessageSurface = "feishu" | "vscode" | "runtime";
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
+export type TaskAssetKind = "image" | "file";
 
 export interface FeishuThreadBinding {
   chatId: string;
@@ -54,14 +55,19 @@ export interface TaskExecutionProfile {
   effort?: ReasoningEffort;
   sandbox?: SandboxMode;
   approvalPolicy?: ApprovalPolicy;
+  planMode?: boolean;
 }
 
-export interface ImageAsset {
+export interface TaskAsset {
   assetId: string;
+  kind: TaskAssetKind;
+  displayName: string;
   localPath: string;
   mimeType: string;
   createdAt: string;
 }
+
+export type ImageAsset = TaskAsset;
 
 export interface TaskDiffEntry {
   path: string;
@@ -75,7 +81,7 @@ export interface ConversationMessage {
   surface: MessageSurface;
   content: string;
   createdAt: string;
-  imageAssetIds?: string[];
+  assetIds?: string[];
 }
 
 export interface DesktopClientState {
@@ -112,7 +118,7 @@ export interface BridgeTask {
   feishuBindingDisabled?: boolean;
   pendingApprovals: QueuedApproval[];
   diffs: TaskDiffEntry[];
-  imageAssets: ImageAsset[];
+  assets: TaskAsset[];
   conversation: ConversationMessage[];
   createdAt: string;
   updatedAt: string;
@@ -160,7 +166,7 @@ export function createBridgeTask(seed: BridgeTaskSeed): BridgeTask {
     feishuBindingDisabled: false,
     pendingApprovals: [],
     diffs: [],
-    imageAssets: [],
+    assets: [],
     conversation: [],
     createdAt: timestamp,
     updatedAt: timestamp,

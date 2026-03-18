@@ -28,10 +28,11 @@
 ### VSCode Frontend
 
 - 负责任务列表、编辑器页监视器、任务详情、diff 面板、审批队列、登录状态页
-- 负责桌面图片输入和 daemon 交互
+- 负责桌面文本、图片、文件输入和 daemon 交互
 - 主监视器通过 `Open Monitor` 命令以 Webview editor tab 打开，而不是常驻侧栏
 - VSCode 调试启动项通过 `preLaunchTask` 复用根脚本的一键启动流程，并在 Extension Development Host 里自动打开 monitor
 - 监视器页内置任务列表、Conversation、Desktop Composer，以及本地任务多选批量清理
+- Desktop Composer 可直接设置后续 turn 的 `model`、`effort`、`planMode`，并附加本地照片或文件
 - 监视器页支持对未绑定任务一键 `Bind to New Feishu Topic`，在默认飞书群里创建新话题并立刻绑定当前任务
 - 任务卡片同时显示任务启动来源标签和当前 Feishu 绑定标签，例如 `VSCODE + FEISHU`、`CLI + FEISHU`
 - 暴露 `openMonitor`、`newTask`、`resumeTask`、`importThreads`、`sendMessage`、`interruptTask`、`approve*`、`retryTurn`、`openDiff`
@@ -42,6 +43,8 @@
 - 一个工作群作为入口
 - 每个 bridge task 绑定一个 Feishu 线程或回复链
 - 负责移动端对话、审批和控制命令
+- 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
+- Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex
 
 ## 目录结构
 
@@ -69,8 +72,8 @@
   - `seq`, `taskId`, `kind`, `timestamp`, `payload`
 - `QueuedApproval`
   - `requestId`, `taskId`, `turnId`, `kind`, `reason`, `state`
-- `ImageAsset`
-  - `assetId`, `localPath`, `mimeType`, `createdAt`
+- `TaskAsset`
+  - `assetId`, `kind`, `displayName`, `localPath`, `mimeType`, `createdAt`
 - `DesktopClientState`
   - `clientId`, `kind`, `connectedAt`, `lastSeenAt`
 
@@ -82,6 +85,7 @@
 - `/auth/login/start`
 - `/auth/account`
 - `/auth/rate-limits`
+- `/models`
 - `/tasks`
 - `/tasks/:id`
 - `/tasks/:id/resume`
@@ -99,12 +103,13 @@
 - `snapshot` frame: full daemon snapshot for tasks, account, and rate limits
 - `event` frame: bridge event delta with `kind`, `taskId`, `payload`, `seq`, and `timestamp`
 
-## 图片与 uploads 流程
+## 附件与 uploads 流程
 
-1. VSCode frontend receives a local image input.
+1. VSCode frontend or Feishu bridge receives a local image/file input.
 2. Frontend posts the base64 payload to `/tasks/:id/uploads`.
 3. Daemon writes the file into a persistent uploads directory.
-4. Daemon passes the resulting local image reference into the target Codex thread.
+4. 图片附件会作为 `localImage` 输入项直接传给 Codex。
+5. 通用文件附件会记录为 task asset，并在用户消息里附带本地文件路径提示，让 Codex 通过工具从磁盘读取。
 
 ## 恢复与持久化
 

@@ -198,8 +198,16 @@ export class StdioCodexRuntime implements CodexRuntime {
     model?: string;
     effort?: CodexReasoningEffort;
     approvalPolicy?: CodexApprovalPolicy;
+    planMode?: boolean;
   }): Promise<CodexTurnDescriptor> {
-    const response = await this.client.request<{ turn: RawCodexTurnDescriptor }>("turn/start", params);
+    const response = await this.client.request<{ turn: RawCodexTurnDescriptor }>("turn/start", {
+      threadId: params.threadId,
+      input: params.input,
+      ...(params.model ? { model: params.model } : {}),
+      ...(params.effort ? { effort: params.effort } : {}),
+      ...(params.approvalPolicy ? { approvalPolicy: params.approvalPolicy } : {}),
+      ...(params.planMode ? { plan_mode: true } : {}),
+    });
     return normalizeTurnDescriptor(response.turn, params.threadId);
   }
 

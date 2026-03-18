@@ -40,8 +40,10 @@ export interface FeishuThreadDraftCardData {
   prompt?: string;
   model?: string;
   effort?: ReasoningEffort;
+  planMode: boolean;
   sandbox: SandboxMode;
   approvalPolicy: ApprovalPolicy;
+  attachmentSummary?: string;
   note?: string;
   binding: FeishuThreadBinding;
   revision: number;
@@ -53,17 +55,22 @@ export interface FeishuTaskControlCardData {
   note?: string;
   binding: FeishuThreadBinding;
   revision: number;
+  modelOptions: FeishuModelOption[];
 }
 
 export type FeishuCardActionKind =
   | "test.ping"
   | "draft.select.model"
   | "draft.select.effort"
+  | "draft.toggle.plan-mode"
   | "draft.select.sandbox"
   | "draft.select.approval"
   | "draft.use-defaults"
   | "draft.create"
   | "draft.cancel"
+  | "task.select.model"
+  | "task.select.effort"
+  | "task.toggle.plan-mode"
   | "task.status"
   | "task.interrupt"
   | "task.retry"
@@ -181,6 +188,7 @@ function formatExecutionProfile(profile: TaskExecutionProfile | undefined): stri
   return [
     `model: ${profile?.model ?? "runtime-default"}`,
     `effort: ${profile?.effort ?? "model-default"}`,
+    `planMode: ${profile?.planMode ? "on" : "off"}`,
     `sandbox: ${profile?.sandbox ?? DEFAULT_NEW_SANDBOX}`,
     `approvalPolicy: ${profile?.approvalPolicy ?? DEFAULT_NEW_APPROVAL_POLICY}`,
   ];
@@ -294,9 +302,10 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
       markdown(
         [
           "**How this thread works**",
-          "- plain text in this Feishu thread updates the draft prompt",
+          "- plain text updates the draft prompt",
+          "- photos and files are queued as draft attachments",
           "- press Create on Host to create the real Codex task on the workstation",
-          "- after binding, later plain text in this thread continues the same host task",
+          "- after binding, later plain text, photos, and files continue the same host task",
         ].join("\n"),
       ),
       divider(),
@@ -307,9 +316,11 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
           ...formatExecutionProfile({
             model: data.model,
             effort: data.effort,
+            planMode: data.planMode,
             sandbox: data.sandbox,
             approvalPolicy: data.approvalPolicy,
           }),
+          `attachments: ${data.attachmentSummary ?? "none"}`,
         ].join("\n"),
       ),
       ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
@@ -365,6 +376,15 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
       ]),
       action([
         button({
+          text: `Plan Mode: ${data.planMode ? "On" : "Off"}`,
+          value: baseActionValue("draft.toggle.plan-mode", data.binding, {
+            revision: data.revision,
+          }),
+          type: data.planMode ? "primary" : "default",
+        }),
+      ]),
+      action([
+        button({
           text: "Reset to Defaults",
           value: baseActionValue("draft.use-defaults", data.binding, {
             revision: data.revision,
@@ -392,6 +412,23 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
 export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuInteractiveCard {
   const note = truncateNote(data.note);
   const { task, binding, revision } = data;
+  const selectedModel = task.executionProfile.model;
+  const selectedEffort = task.executionProfile.effort;
+  const modelDescriptor = data.modelOptions.find((entry) => entry.id === selectedModel);
+  const modelOptions = [
+    { label: "runtime-default", value: "" },
+    ...data.modelOptions.map((model) => ({
+      label: model.isDefault ? `${model.id} (default)` : `${model.id} (${model.displayName})`,
+      value: model.id,
+    })),
+  ];
+  const effortOptions = [
+    { label: "model-default", value: "" },
+    ...((modelDescriptor?.supportedReasoningEfforts ?? ["none", "minimal", "low", "medium", "high", "xhigh"]).map((effort) => ({
+      label: modelDescriptor?.defaultReasoningEffort === effort ? `${effort} (default)` : effort,
+      value: effort,
+    }))),
+  ];
 
   return {
     config: {
@@ -406,7 +443,7 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       markdown(
         [
           "**How this thread works**",
-          "- plain text in this Feishu thread is forwarded into the same host Codex task",
+          "- plain text, photos, and files in this thread are forwarded into the same host Codex task",
           "- agent replies, approvals, and task notes are returned to this thread",
           "- use Unbind Thread if you want to detach Feishu without deleting the host task",
         ].join("\n"),
@@ -418,11 +455,43 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           `taskId: ${task.taskId}`,
           `status: ${task.status}`,
           ...formatExecutionProfile(task.executionProfile),
+          `attachments: ${task.assets.length}`,
           `messages: ${task.conversation.length}`,
           `pending approvals: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
         ].join("\n"),
       ),
       ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
+      divider(),
+      action([
+        selectStatic({
+          placeholder: "Choose model",
+          initialOption: selectedModel,
+          options: modelOptions,
+          value: baseActionValue("task.select.model", binding, {
+            taskId: task.taskId,
+            revision,
+          }),
+        }),
+        selectStatic({
+          placeholder: "Choose reasoning effort",
+          initialOption: selectedEffort,
+          options: effortOptions,
+          value: baseActionValue("task.select.effort", binding, {
+            taskId: task.taskId,
+            revision,
+          }),
+        }),
+      ]),
+      action([
+        button({
+          text: `Plan Mode: ${task.executionProfile.planMode ? "On" : "Off"}`,
+          type: task.executionProfile.planMode ? "primary" : "default",
+          value: baseActionValue("task.toggle.plan-mode", binding, {
+            taskId: task.taskId,
+            revision,
+          }),
+        }),
+      ]),
       ...buildApprovalActionRows(task, binding, revision),
       divider(),
       action([

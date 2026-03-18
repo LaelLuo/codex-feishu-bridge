@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import path from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import type {
   ApprovalPolicy,
@@ -63,11 +64,20 @@ interface FeishuThreadDraft {
   prompt?: string;
   model?: string;
   effort?: ReasoningEffort;
+  planMode: boolean;
   sandbox: SandboxMode;
   approvalPolicy: ApprovalPolicy;
+  attachments: FeishuDraftAttachment[];
   cardMessageId?: string;
   cardRevision: number;
   note?: string;
+}
+
+interface FeishuDraftAttachment {
+  localPath: string;
+  fileName: string;
+  mimeType: string;
+  kind: "image" | "file";
 }
 
 interface FeishuTaskCardState {
@@ -150,13 +160,26 @@ const APPROVAL_POLICY_VALUES = ["untrusted", "on-failure", "on-request", "never"
 const DEFAULT_NEW_SANDBOX: SandboxMode = "workspace-write";
 const DEFAULT_NEW_APPROVAL_POLICY: ApprovalPolicy = "on-request";
 
+function parseMessageContent(rawContent: string | undefined): Record<string, unknown> {
+  if (!rawContent) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function parseTextContent(rawContent: string | undefined): string {
   if (!rawContent) {
     return "";
   }
 
   try {
-    const parsed = JSON.parse(rawContent) as { text?: string };
+    const parsed = parseMessageContent(rawContent) as { text?: string };
     return parsed.text?.trim() ?? rawContent.trim();
   } catch {
     return rawContent.trim();
@@ -210,8 +233,10 @@ function createDefaultDraft(binding: FeishuThreadBinding): FeishuThreadDraft {
     chatId: binding.chatId,
     threadKey: binding.threadKey,
     rootMessageId: binding.rootMessageId,
+    planMode: false,
     sandbox: DEFAULT_NEW_SANDBOX,
     approvalPolicy: DEFAULT_NEW_APPROVAL_POLICY,
+    attachments: [],
     cardRevision: 1,
   };
 }
@@ -229,9 +254,46 @@ function formatExecutionProfile(profile: TaskExecutionProfile | undefined): stri
   return [
     `model: ${profile?.model ?? "runtime-default"}`,
     `effort: ${profile?.effort ?? "model-default"}`,
+    `planMode: ${profile?.planMode ? "on" : "off"}`,
     `sandbox: ${profile?.sandbox ?? DEFAULT_NEW_SANDBOX}`,
     `approvalPolicy: ${profile?.approvalPolicy ?? DEFAULT_NEW_APPROVAL_POLICY}`,
   ];
+}
+
+function formatDraftAttachmentsSummary(draft: FeishuThreadDraft): string {
+  if (draft.attachments.length === 0) {
+    return "none";
+  }
+
+  const imageCount = draft.attachments.filter((attachment) => attachment.kind === "image").length;
+  const fileCount = draft.attachments.length - imageCount;
+  const parts: string[] = [];
+  if (imageCount > 0) {
+    parts.push(`${imageCount} photo${imageCount === 1 ? "" : "s"}`);
+  }
+  if (fileCount > 0) {
+    parts.push(`${fileCount} file${fileCount === 1 ? "" : "s"}`);
+  }
+  return parts.join(", ");
+}
+
+function fileNameFromContentDisposition(header: string | null): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const quotedMatch = /filename="([^"]+)"/i.exec(header);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const plainMatch = /filename=([^;]+)/i.exec(header);
+  return plainMatch?.[1]?.trim();
 }
 
 function formatTaskSummary(task: BridgeTask): string {
@@ -243,6 +305,7 @@ function formatTaskSummary(task: BridgeTask): string {
     `workspace: ${task.workspaceRoot}`,
     `pendingApprovals: ${task.pendingApprovals.length}`,
     `diffs: ${task.diffs.length}`,
+    `attachments: ${task.assets.length}`,
     `messages: ${task.conversation.length}`,
     `desktopReplySyncToFeishu: ${task.desktopReplySyncToFeishu}`,
     ...formatExecutionProfile(task.executionProfile),
@@ -357,6 +420,7 @@ function formatHelpText(): string {
     "/new models",
     "/new model <model-id>",
     "/new effort <none|minimal|low|medium|high|xhigh>",
+    "/new plan <on|off>",
     "/new sandbox <read-only|workspace-write|danger-full-access>",
     "/new approval <untrusted|on-failure|on-request|never>",
     "/new create",
@@ -375,14 +439,17 @@ function formatDraftSummary(draft: FeishuThreadDraft): string {
     `prompt: ${draft.prompt?.trim() ? draft.prompt : "(not set)"}`,
     `model: ${draft.model ?? "runtime-default"}`,
     `effort: ${draft.effort ?? "model-default"}`,
+    `planMode: ${draft.planMode ? "on" : "off"}`,
     `sandbox: ${draft.sandbox}`,
     `approvalPolicy: ${draft.approvalPolicy}`,
+    `attachments: ${formatDraftAttachmentsSummary(draft)}`,
     "",
     "Next steps:",
     "/new prompt <text>",
     "/new models",
     "/new model <model-id>",
     "/new effort <none|minimal|low|medium|high|xhigh>",
+    "/new plan <on|off>",
     "/new sandbox <read-only|workspace-write|danger-full-access>",
     "/new approval <untrusted|on-failure|on-request|never>",
     "/new create",
@@ -558,7 +625,11 @@ export class FeishuBridge {
       this.processedEventIds.add(eventId);
     }
     for (const draft of persisted.drafts ?? []) {
-      this.threadDrafts.set(draftStorageKey(draft), draft);
+      this.threadDrafts.set(draftStorageKey(draft), {
+        ...draft,
+        planMode: draft.planMode ?? false,
+        attachments: draft.attachments ?? [],
+      });
     }
     for (const card of persisted.taskCards ?? []) {
       this.threadTaskCards.set(draftStorageKey(card), card);
@@ -889,25 +960,37 @@ export class FeishuBridge {
       return;
     }
 
-    if (message.message_type !== "text") {
-      this.options.logger.info("ignoring non-text feishu message", summary);
-      return;
-    }
-
     const lookupIds = collectLookupIds(message);
     const lookupId = lookupIds[0];
     if (!lookupId) {
-      this.options.logger.info("ignoring feishu incoming text without lookup id", summary);
+      this.options.logger.info("ignoring feishu incoming message without lookup id", summary);
       return;
     }
 
     const actorId = sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? sender?.sender_id?.union_id ?? "unknown";
-    const text = parseTextContent(message.content);
-    const { command, args } = normalizeCommand(text);
-    const slashCommand = isSlashCommand(text);
     const replyTargetId = message.message_id ?? message.root_id ?? message.parent_id ?? message.thread_id ?? lookupId;
     const currentBinding = buildBindingFromMessage(message);
     const task = this.options.service.findTaskByFeishuBinding(message.chat_id, lookupIds);
+
+    if (message.message_type === "image" || message.message_type === "file") {
+      await this.handleIncomingAttachmentMessage({
+        message,
+        task,
+        currentBinding,
+        replyTargetId,
+        actorId,
+      });
+      return;
+    }
+
+    if (message.message_type !== "text") {
+      this.options.logger.info("ignoring unsupported feishu message type", summary);
+      return;
+    }
+
+    const text = parseTextContent(message.content);
+    const { command, args } = normalizeCommand(text);
+    const slashCommand = isSlashCommand(text);
 
     if (slashCommand) {
       try {
@@ -978,6 +1061,148 @@ export class FeishuBridge {
         `Task action failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  private async handleIncomingAttachmentMessage(params: {
+    message: FeishuIncomingMessage;
+    task: BridgeTask | null;
+    currentBinding: FeishuThreadBinding | null;
+    replyTargetId: string;
+    actorId: string;
+  }): Promise<void> {
+    const { message, task, currentBinding, replyTargetId, actorId } = params;
+    const attachment = await this.downloadIncomingAttachment(message);
+    if (!attachment) {
+      await this.replyToMessage(replyTargetId, "This attachment type is not supported yet.");
+      return;
+    }
+
+    if (!task) {
+      if (!currentBinding) {
+        this.options.logger.info("ignoring feishu attachment without task or draft binding", {
+          messageType: message.message_type,
+          messageId: message.message_id,
+        });
+        return;
+      }
+
+      const draft = this.getThreadDraft(currentBinding) ?? createDefaultDraft(currentBinding);
+      const storedAttachment = await this.saveDraftAttachment(currentBinding, attachment);
+      draft.attachments = [...draft.attachments, storedAttachment];
+      draft.note = `Queued ${storedAttachment.kind === "image" ? "photo" : "file"} attachment ${storedAttachment.fileName}.`;
+      draft.cardRevision += 1;
+      await this.saveThreadDraft(draft);
+      await this.renderDraftCard({
+        binding: currentBinding,
+        draft,
+        replyTargetId,
+        note: draft.note,
+      });
+      return;
+    }
+
+    const upload = await this.options.service.uploadTaskAsset(task.taskId, {
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      contentBase64: attachment.buffer.toString("base64"),
+      kind: attachment.kind,
+    });
+    await this.options.service.sendMessage(task.taskId, {
+      content: "",
+      assetIds: [upload.asset.assetId],
+      source: "feishu",
+      replyToFeishu: true,
+      executionProfile: task.executionProfile,
+    });
+
+    await this.replyToMessage(
+      task.feishuBinding?.rootMessageId ?? replyTargetId,
+      `Queued ${attachment.kind === "image" ? "photo" : "file"} attachment from ${actorId}.`,
+    );
+  }
+
+  private async downloadIncomingAttachment(message: FeishuIncomingMessage): Promise<{
+    buffer: Buffer;
+    fileName: string;
+    mimeType: string;
+    kind: "image" | "file";
+  } | null> {
+    const content = parseMessageContent(message.content);
+    if (message.message_type === "image") {
+      const imageKey = typeof content.image_key === "string" ? content.image_key : "";
+      if (!imageKey) {
+        return null;
+      }
+      const response = await this.requestFeishuBinary(`/open-apis/im/v1/images/${encodeURIComponent(imageKey)}`);
+      const mimeType = response.mimeType || "image/png";
+      const extension = mimeType.split("/")[1] ?? "png";
+      return {
+        buffer: response.buffer,
+        fileName: response.fileName ?? `${imageKey}.${extension}`,
+        mimeType,
+        kind: "image",
+      };
+    }
+
+    if (message.message_type === "file") {
+      const fileKey = typeof content.file_key === "string" ? content.file_key : "";
+      if (!fileKey) {
+        return null;
+      }
+      const response = await this.requestFeishuBinary(`/open-apis/im/v1/files/${encodeURIComponent(fileKey)}`);
+      return {
+        buffer: response.buffer,
+        fileName:
+          (typeof content.file_name === "string" && content.file_name) ||
+          response.fileName ||
+          `${fileKey}.bin`,
+        mimeType: response.mimeType || "application/octet-stream",
+        kind: "file",
+      };
+    }
+
+    return null;
+  }
+
+  private async saveDraftAttachment(
+    binding: FeishuThreadBinding,
+    attachment: {
+      buffer: Buffer;
+      fileName: string;
+      mimeType: string;
+      kind: "image" | "file";
+    },
+  ): Promise<FeishuDraftAttachment> {
+    const draftDir = path.join(
+      this.options.config.uploadsDir,
+      "feishu-drafts",
+      `${binding.chatId}-${binding.threadKey}`,
+    );
+    await mkdir(draftDir, { recursive: true });
+    const fileName = `${Date.now()}-${path.basename(attachment.fileName).replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const localPath = path.join(draftDir, fileName);
+    await writeFile(localPath, attachment.buffer);
+    return {
+      localPath,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      kind: attachment.kind,
+    };
+  }
+
+  private async uploadDraftAttachmentsToTask(taskId: string, draft: FeishuThreadDraft): Promise<string[]> {
+    const assetIds: string[] = [];
+    for (const attachment of draft.attachments) {
+      const contentBase64 = (await readFile(attachment.localPath)).toString("base64");
+      const upload = await this.options.service.uploadTaskAsset(taskId, {
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        contentBase64,
+        kind: attachment.kind,
+      });
+      assetIds.push(upload.asset.assetId);
+    }
+    return assetIds;
   }
 
   private async handleSlashCommand(params: {
@@ -1205,7 +1430,11 @@ export class FeishuBridge {
       return;
     }
 
+    const existing = this.threadDrafts.get(draftStorageKey(binding));
     this.threadDrafts.delete(draftStorageKey(binding));
+    if (existing?.attachments.length) {
+      void Promise.allSettled(existing.attachments.map((attachment) => rm(attachment.localPath, { force: true })));
+    }
     void this.persistState();
   }
 
@@ -1293,14 +1522,16 @@ export class FeishuBridge {
   private async buildDraftCard(
     binding: FeishuThreadBinding,
     draft: FeishuThreadDraft,
-    note?: string,
+  note?: string,
   ): Promise<FeishuInteractiveCard> {
     return createDraftCard({
       prompt: draft.prompt,
       model: draft.model,
       effort: draft.effort,
+      planMode: draft.planMode,
       sandbox: draft.sandbox,
       approvalPolicy: draft.approvalPolicy,
+      attachmentSummary: formatDraftAttachmentsSummary(draft),
       note,
       binding,
       revision: draft.cardRevision,
@@ -1317,7 +1548,7 @@ export class FeishuBridge {
     const { task, binding, replyTargetId, note } = params;
     const existing = this.getThreadTaskCard(binding);
     const revision = (existing?.revision ?? 0) + 1;
-    const card = this.buildTaskControlCard(task, binding, revision, note ?? existing?.note);
+    const card = await this.buildTaskControlCard(task, binding, revision, note ?? existing?.note);
 
     let messageId = existing?.messageId;
     if (!messageId && replyTargetId) {
@@ -1340,17 +1571,18 @@ export class FeishuBridge {
     return card;
   }
 
-  private buildTaskControlCard(
+  private async buildTaskControlCard(
     task: BridgeTask,
     binding: FeishuThreadBinding,
     revision: number,
     note?: string,
-  ): FeishuInteractiveCard {
+  ): Promise<FeishuInteractiveCard> {
     return createTaskControlCard({
       task,
       binding,
       note,
       revision,
+      modelOptions: this.toModelOptions(await this.options.service.listModels()),
     });
   }
 
@@ -1515,6 +1747,24 @@ export class FeishuBridge {
         });
         return;
       }
+      case "plan": {
+        const rawValue = args[1]?.toLowerCase();
+        if (rawValue !== "on" && rawValue !== "off") {
+          await this.replyToMessage(replyTargetId, "Usage: /new plan <on|off>");
+          return;
+        }
+
+        draft.planMode = rawValue === "on";
+        draft.cardRevision += 1;
+        await this.saveThreadDraft(draft);
+        await this.renderDraftCard({
+          binding: currentBinding,
+          draft,
+          replyTargetId,
+          note: `Plan mode ${draft.planMode ? "enabled" : "disabled"} from slash command.`,
+        });
+        return;
+      }
       case "sandbox": {
         const sandbox = args[1] as SandboxMode | undefined;
         if (!sandbox || !SANDBOX_MODE_VALUES.includes(sandbox)) {
@@ -1576,6 +1826,7 @@ export class FeishuBridge {
         const executionProfile: TaskExecutionProfile = {
           ...(draft.model ? { model: draft.model } : {}),
           ...(draft.effort ? { effort: draft.effort } : {}),
+          ...(draft.planMode ? { planMode: true } : {}),
           sandbox: draft.sandbox,
           approvalPolicy: draft.approvalPolicy,
         };
@@ -1586,23 +1837,27 @@ export class FeishuBridge {
           replyToFeishu: true,
         });
         await this.options.service.bindFeishuThread(task.taskId, currentBinding);
+        const attachmentAssetIds = await this.uploadDraftAttachmentsToTask(task.taskId, draft);
         this.deleteThreadDraft(currentBinding);
 
         let response = [
           `Created task ${task.taskId}.`,
           `title: ${task.title}`,
           ...formatExecutionProfile(executionProfile),
+          attachmentAssetIds.length ? `attachmentsQueued: ${attachmentAssetIds.length}` : undefined,
           fallbackNote,
         ]
           .filter(Boolean)
           .join("\n");
 
-        if (draft.prompt?.trim()) {
+        if (draft.prompt?.trim() || attachmentAssetIds.length) {
           void this.options.service
             .sendMessage(task.taskId, {
-              content: draft.prompt,
+              content: draft.prompt ?? "",
+              assetIds: attachmentAssetIds,
               source: "feishu",
               replyToFeishu: true,
+              executionProfile,
             })
             .catch((error) => {
               this.options.logger.warn("failed to queue initial draft prompt from slash create", {
@@ -1610,7 +1865,7 @@ export class FeishuBridge {
                 error,
               });
             });
-          response = `${response}\nfirstPrompt: queued`;
+          response = `${response}\ninitialMessage: queued`;
         }
 
         await this.renderTaskControlCard({
@@ -1668,6 +1923,7 @@ export class FeishuBridge {
         case "draft.use-defaults":
           draft.model = undefined;
           draft.effort = undefined;
+          draft.planMode = false;
           draft.sandbox = DEFAULT_NEW_SANDBOX;
           draft.approvalPolicy = DEFAULT_NEW_APPROVAL_POLICY;
           draft.note = "Reset to defaults.";
@@ -1714,6 +1970,10 @@ export class FeishuBridge {
           draft.note = `Selected effort ${effort}.`;
           break;
         }
+        case "draft.toggle.plan-mode":
+          draft.planMode = !draft.planMode;
+          draft.note = `Plan mode ${draft.planMode ? "enabled" : "disabled"}.`;
+          break;
         case "draft.select.sandbox": {
           const sandbox = action?.option as SandboxMode | undefined;
           if (!sandbox || !SANDBOX_MODE_VALUES.includes(sandbox)) {
@@ -1738,6 +1998,7 @@ export class FeishuBridge {
           const executionProfile: TaskExecutionProfile = {
             ...(draft.model ? { model: draft.model } : {}),
             ...(draft.effort ? { effort: draft.effort } : {}),
+            ...(draft.planMode ? { planMode: true } : {}),
             sandbox: draft.sandbox,
             approvalPolicy: draft.approvalPolicy,
           };
@@ -1748,6 +2009,7 @@ export class FeishuBridge {
             replyToFeishu: true,
           });
           await this.options.service.bindFeishuThread(task.taskId, binding);
+          const attachmentAssetIds = await this.uploadDraftAttachmentsToTask(task.taskId, draft);
           this.deleteThreadDraft(binding);
 
           const boundTask = this.options.service.getTask(task.taskId) ?? task;
@@ -1764,12 +2026,14 @@ export class FeishuBridge {
             });
           }
 
-          if (draft.prompt?.trim()) {
+          if (draft.prompt?.trim() || attachmentAssetIds.length) {
             void this.options.service
               .sendMessage(task.taskId, {
-                content: draft.prompt,
+                content: draft.prompt ?? "",
+                assetIds: attachmentAssetIds,
                 source: "feishu",
                 replyToFeishu: true,
+                executionProfile,
               })
               .catch((error) => {
                 this.options.logger.warn("failed to queue initial draft prompt from card create", {
@@ -1779,11 +2043,11 @@ export class FeishuBridge {
               });
           }
 
-          return this.buildTaskControlCard(
+          return await this.buildTaskControlCard(
             boundTask,
             binding,
             (this.getThreadTaskCard(binding)?.revision ?? 0) + 1,
-            `Created task ${task.taskId}.${draft.prompt?.trim() ? " Initial prompt queued." : ""}`,
+            `Created task ${task.taskId}.${draft.prompt?.trim() || attachmentAssetIds.length ? " Initial message queued." : ""}`,
           );
         }
         default:
@@ -1814,6 +2078,84 @@ export class FeishuBridge {
     let note = currentCard?.note;
 
     switch (value.kind) {
+      case "task.select.model": {
+        const modelId = action?.option ?? "";
+        const models = await this.options.service.listModels();
+        const model = modelId ? models.find((entry) => entry.id === modelId || entry.model === modelId) : null;
+        if (modelId && !model) {
+          note = `Unknown model: ${modelId}`;
+          break;
+        }
+
+        const nextProfile: TaskExecutionProfile = {
+          ...(model ? { model: model.id } : {}),
+          ...(task.executionProfile.effort ? { effort: task.executionProfile.effort } : {}),
+          ...(task.executionProfile.planMode ? { planMode: true } : {}),
+          ...(task.executionProfile.sandbox ? { sandbox: task.executionProfile.sandbox } : {}),
+          ...(task.executionProfile.approvalPolicy ? { approvalPolicy: task.executionProfile.approvalPolicy } : {}),
+        };
+
+        if (model && nextProfile.effort && !model.supportedReasoningEfforts.includes(nextProfile.effort)) {
+          nextProfile.effort = model.defaultReasoningEffort;
+          note = `Selected model ${model.id}; effort reverted to ${model.defaultReasoningEffort}.`;
+        } else {
+          note = model ? `Selected model ${model.id}.` : "Reverted to runtime-default model.";
+        }
+
+        await this.options.service.updateTaskSettings(task.taskId, {
+          executionProfile: nextProfile,
+        });
+        break;
+      }
+      case "task.select.effort": {
+        const rawEffort = action?.option ?? "";
+        const effort = rawEffort as ReasoningEffort | "";
+        if (effort && !REASONING_EFFORT_VALUES.includes(effort)) {
+          note = "Unsupported reasoning effort.";
+          break;
+        }
+
+        const modelId = task.executionProfile.model;
+        if (modelId && effort) {
+          const models = await this.options.service.listModels();
+          const model = models.find((entry) => entry.id === modelId || entry.model === modelId);
+          if (!model) {
+            note = `Configured model ${modelId} is no longer available.`;
+            break;
+          }
+          if (!model.supportedReasoningEfforts.includes(effort)) {
+            note = `Model ${model.id} does not support effort ${effort}.`;
+            break;
+          }
+        }
+
+        await this.options.service.updateTaskSettings(task.taskId, {
+          executionProfile: {
+            ...(task.executionProfile.model ? { model: task.executionProfile.model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(task.executionProfile.planMode ? { planMode: true } : {}),
+            ...(task.executionProfile.sandbox ? { sandbox: task.executionProfile.sandbox } : {}),
+            ...(task.executionProfile.approvalPolicy ? { approvalPolicy: task.executionProfile.approvalPolicy } : {}),
+          },
+        });
+        note = effort ? `Selected effort ${effort}.` : "Reverted to model-default effort.";
+        break;
+      }
+      case "task.toggle.plan-mode":
+        {
+        const nextPlanMode = !task.executionProfile.planMode;
+        await this.options.service.updateTaskSettings(task.taskId, {
+          executionProfile: {
+            ...(task.executionProfile.model ? { model: task.executionProfile.model } : {}),
+            ...(task.executionProfile.effort ? { effort: task.executionProfile.effort } : {}),
+            ...(nextPlanMode ? { planMode: true } : {}),
+            ...(task.executionProfile.sandbox ? { sandbox: task.executionProfile.sandbox } : {}),
+            ...(task.executionProfile.approvalPolicy ? { approvalPolicy: task.executionProfile.approvalPolicy } : {}),
+          },
+        });
+        note = `Plan mode ${nextPlanMode ? "enabled" : "disabled"}.`;
+        break;
+        }
       case "task.status":
         note = formatTaskSummary(task);
         break;
@@ -1898,7 +2240,7 @@ export class FeishuBridge {
     }
 
     const nextTask = this.options.service.getTask(task.taskId) ?? task;
-    return this.buildTaskControlCard(nextTask, binding, revision, note);
+    return await this.buildTaskControlCard(nextTask, binding, revision, note);
   }
 
   private async startLongConnection(): Promise<void> {
@@ -2027,6 +2369,32 @@ export class FeishuBridge {
     }
 
     return body.data;
+  }
+
+  private async requestFeishuBinary(pathname: string, init?: RequestInit): Promise<{
+    buffer: Buffer;
+    mimeType: string;
+    fileName?: string;
+  }> {
+    const accessToken = await this.getTenantAccessToken();
+    const url = new URL(pathname, this.options.config.feishuBaseUrl);
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(init?.headers ?? {}),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Feishu API failed (${response.status}): ${await response.text()}`);
+    }
+
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      mimeType: response.headers.get("content-type") ?? "application/octet-stream",
+      fileName: fileNameFromContentDisposition(response.headers.get("content-disposition")),
+    };
   }
 
   private async getTenantAccessToken(): Promise<string> {
