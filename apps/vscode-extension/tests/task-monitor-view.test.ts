@@ -114,6 +114,7 @@ describe("task monitor view source", () => {
     assert.match(source, /<strong>Approval<\/strong>/);
     assert.match(source, /<strong>Feishu While Running<\/strong>/);
     assert.match(source, /<strong>Queued Next Turns<\/strong>/);
+    assert.doesNotMatch(source, /Latest Summary/);
   });
 
   it("color-codes conversation blocks for cli, vscode, feishu, and agent messages", () => {

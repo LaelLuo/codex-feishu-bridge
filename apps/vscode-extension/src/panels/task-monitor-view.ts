@@ -1813,7 +1813,6 @@ export class TaskMonitorPanel implements vscode.Disposable {
                 <button class="danger" \${task.canForgetLocalTask ? "" : "disabled"} data-action="delete-local-task" title="Permanently delete this task and its underlying Codex thread from this computer.">Delete Codex Thread</button>
               </div>
             </div>
-            \${task.latestSummary ? \`<div class="panel" style="margin-top: 12px; padding: 12px;"><div class="eyebrow">Latest Summary</div>\${pre(task.latestSummary)}</div>\` : ""}
           </section>
           \${foldout("approvals", "Approvals", task.approvals.length, \`<div class="approvals">\${approvalsList()}</div>\`)}
           \${foldout("diffs", "Diffs", task.diffs.length, \`<div class="diffs">\${diffList()}</div>\`)}
