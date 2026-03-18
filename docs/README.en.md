@@ -137,24 +137,28 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 
 ## VSCode Monitor
 
-Open the repository in VSCode and run the `Codex Feishu Bridge Extension` launch target from [`.vscode/launch.json`](../.vscode/launch.json).
-It now runs `Codex Bridge: One Click Start` first, then opens the Extension Development Host.
+This is the main desktop entry for watching, taking over, and cleaning up tasks.
 
-The extension is positioned as a **graphical monitor for Feishu task threads**. The recommended desktop workflow is:
+Recommended way to open it:
 
-1. Run `./scripts/dev-stack.sh up`, or simply press `F5`.
-2. Confirm that `http://127.0.0.1:8787/health` is reachable.
-3. Start or continue the task from Feishu.
-4. Use `Codex Bridge: Open Monitor` to open the monitor editor page.
-5. Inspect:
-   - task status, workspace, thread id, and Feishu binding
-   - conversation timeline with `feishu` / `vscode` / `runtime` source tags
-   - pending approvals
-   - diff summaries
-6. Continue the task from the monitor's persistent composer instead of a popup input box.
-7. Handle interrupt, retry, approvals, diff opening, and unbind actions from the same page.
+1. Run `./scripts/dev-stack.sh up`, or simply press `F5` in VSCode.
+2. `F5` bootstraps the local bridge first, then opens the Extension Development Host.
+3. In that window, run `Codex Bridge: Open Monitor`.
 
-Desktop-origin messages are not mirrored back into Feishu as user text. For Feishu-bound tasks, the monitor exposes a task-level toggle that controls whether the resulting agent reply should continue syncing back to the Feishu thread.
+In the monitor, you usually use it to:
+
+- see all tasks with `FEISHU`, `VSCODE`, and `CLI` badges
+- inspect status, workspace, thread id, conversation, approvals, and diffs
+- continue the task from the composer at the bottom
+- control whether desktop replies keep syncing back to Feishu
+- bulk `Forget Selected` or `Delete Selected` local unbound tasks
+
+If the task list does not show the task you care about yet, click `Refresh` first. If the task already exists in host-side `~/.codex` but has not entered the bridge yet, use `Import Recent Host Threads`.
+
+`Import Recent Host Threads` is most useful when:
+
+- a host task already exists but has not appeared in the monitor
+- you are about to leave the desk and want to sync a host task into bridge / Feishu before continuing mobile supervision
 
 ## Feishu Usage
 
