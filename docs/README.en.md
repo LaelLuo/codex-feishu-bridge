@@ -80,7 +80,7 @@ Then:
 1. Open the repository in VSCode.
 2. Press `F5` on `Codex Feishu Bridge Extension`.
 3. The launch target now runs the same one-click bootstrap as a VSCode `preLaunchTask`.
-4. In the Extension Development Host, run `Codex Bridge: Open Monitor`.
+4. The Extension Development Host opens the monitor automatically.
 
 Companion commands:
 
@@ -102,6 +102,7 @@ The root script [scripts/dev-stack.sh](../scripts/dev-stack.sh) exposes:
 - `logs` for following the bridge runtime logs
 
 The VSCode launch entry in [`.vscode/launch.json`](../.vscode/launch.json) reuses the same bootstrap flow.
+It also auto-opens the monitor in the Extension Development Host.
 
 ## Manual Path
 
@@ -148,7 +149,7 @@ Recommended way to open it:
 
 1. Run `./scripts/dev-stack.sh up`, or simply press `F5` in VSCode.
 2. `F5` bootstraps the local bridge first, then opens the Extension Development Host.
-3. In that window, run `Codex Bridge: Open Monitor`.
+3. The monitor opens automatically in that window.
 
 In the monitor, you usually use it to:
 

@@ -64,7 +64,7 @@ npm run start:all
 1. 用 VSCode 打开这个仓库
 2. 直接按 `F5`
 3. 会自动弹出一个新的 VSCode 窗口
-4. 在新窗口里运行命令 `Codex Bridge: Open Monitor`
+4. monitor 会自动打开，不需要再手动运行命令
 
 ### 4. 开始在飞书里用
 
@@ -182,7 +182,7 @@ npm run stop:all
 - `status`：查看 compose 状态和 `/health`
 - `logs`：跟随 `bridge-runtime` 日志
 
-VSCode 的 [`.vscode/launch.json`](./.vscode/launch.json) 也已经挂上同一条启动任务，所以在仓库里按 `F5` 时，会先自动准备好本地 bridge 开发环境。
+VSCode 的 [`.vscode/launch.json`](./.vscode/launch.json) 也已经挂上同一条启动任务，所以在仓库里按 `F5` 时，会先自动准备好本地 bridge 开发环境，并在新窗口里直接打开 monitor。
 
 ### 手工路径
 
@@ -233,7 +233,7 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 
 1. 先运行 `./scripts/dev-stack.sh up`，或者直接在 VSCode 按 `F5`
 2. `F5` 会自动启动本地 bridge，并打开新的 `Extension Development Host`
-3. 在新窗口里运行命令 `Codex Bridge: Open Monitor`
+3. monitor 会在新窗口里自动打开
 
 在监视器里，你通常会做这些事：
 
