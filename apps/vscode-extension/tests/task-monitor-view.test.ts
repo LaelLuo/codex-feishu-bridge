@@ -77,9 +77,23 @@ describe("task monitor view source", () => {
 
     assert.match(source, /function renderBadges\(badges\)/);
     assert.equal(source.includes('<div class="task-badges">\\${renderBadges(task.badges)}</div>'), true);
+    assert.equal(source.includes('<span class="task-profile" title="Current execution profile for this task.">\\${escapeHtml(task.executionSummary)}</span>'), true);
     assert.equal(source.includes('<div class="hero-badges">\\${renderBadges(task.badges)}</div>'), true);
     assert.match(source, /\.task-row-main/);
+    assert.match(source, /\.task-profile/);
     assert.match(source, /\.badge\.cli/);
+  });
+
+  it("shows current execution settings in the selected task summary metrics", () => {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
+    const source = readFileSync(sourcePath, "utf8");
+
+    assert.match(source, /<strong>Model<\/strong>/);
+    assert.match(source, /<strong>Reasoning<\/strong>/);
+    assert.match(source, /<strong>Plan Mode<\/strong>/);
+    assert.match(source, /<strong>Sandbox<\/strong>/);
+    assert.match(source, /<strong>Approval<\/strong>/);
   });
 
   it("renders the monitor as an editor panel entry point instead of a sidebar view contribution", () => {

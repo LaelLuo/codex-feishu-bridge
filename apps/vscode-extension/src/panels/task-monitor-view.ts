@@ -653,6 +653,13 @@ export class TaskMonitorPanel implements vscode.Disposable {
       .task-row .meta span {
         text-align: left;
       }
+      .task-profile {
+        color: var(--muted);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .task-badges, .hero-badges {
         display: flex;
         flex-wrap: wrap;
@@ -988,6 +995,14 @@ export class TaskMonitorPanel implements vscode.Disposable {
         return new Date(state.lastUpdatedAt).toLocaleString();
       }
 
+      function executionValue(value, fallback) {
+        if (typeof value !== "string") {
+          return fallback;
+        }
+        const normalized = value.trim();
+        return normalized || fallback;
+      }
+
       function captureConversationScroll() {
         const taskId = currentTaskId();
         const conversation = document.getElementById("conversation-list");
@@ -1064,6 +1079,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
                     <div class="meta">
                       <strong>\${escapeHtml(task.title)}</strong>
                       <span class="muted">\${escapeHtml(task.description)}</span>
+                      <span class="task-profile" title="Current execution profile for this task.">\${escapeHtml(task.executionSummary)}</span>
                     </div>
                     <div class="task-badges">\${renderBadges(task.badges)}</div>
                   </div>
@@ -1371,6 +1387,11 @@ export class TaskMonitorPanel implements vscode.Disposable {
             <div class="metrics" style="margin-top: 12px;">
               <div class="metric"><strong>Workspace</strong><span>\${escapeHtml(task.workspaceRoot)}</span></div>
               <div class="metric"><strong>Thread</strong><span>\${escapeHtml(task.threadId)}</span></div>
+              <div class="metric"><strong>Model</strong><span>\${escapeHtml(executionValue(task.executionProfile?.model, "runtime-default"))}</span></div>
+              <div class="metric"><strong>Reasoning</strong><span>\${escapeHtml(executionValue(task.executionProfile?.effort, "model-default"))}</span></div>
+              <div class="metric"><strong>Plan Mode</strong><span>\${escapeHtml(task.executionProfile?.planMode ? "on" : "off")}</span></div>
+              <div class="metric"><strong>Sandbox</strong><span>\${escapeHtml(executionValue(task.executionProfile?.sandbox, "runtime-default"))}</span></div>
+              <div class="metric"><strong>Approval</strong><span>\${escapeHtml(executionValue(task.executionProfile?.approvalPolicy, "runtime-default"))}</span></div>
               <div class="metric"><strong>Feishu Chat</strong><span>\${escapeHtml(task.feishuBinding?.chatId ?? "unbound")}</span></div>
               <div class="metric"><strong>Feishu Thread</strong><span>\${escapeHtml(task.feishuBinding?.threadKey ?? "unbound")}</span></div>
             </div>

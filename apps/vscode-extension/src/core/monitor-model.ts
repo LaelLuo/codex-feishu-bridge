@@ -15,6 +15,7 @@ export interface MonitorTaskListEntry {
   isFeishuBound: boolean;
   badges: MonitorTaskBadge[];
   description: string;
+  executionSummary: string;
 }
 
 export interface MonitorConversationEntry {
@@ -122,6 +123,19 @@ function taskDescription(task: BridgeTask): string {
   return details.join(" · ");
 }
 
+function executionValue(value: string | undefined, fallback: string): string {
+  return value?.trim() ? value.trim() : fallback;
+}
+
+function taskExecutionSummary(task: Pick<BridgeTask, "executionProfile">): string {
+  const profile = task.executionProfile ?? {};
+  return [
+    `Model: ${executionValue(profile.model, "runtime-default")}`,
+    `Reasoning: ${executionValue(profile.effort, "model-default")}`,
+    `Plan: ${profile.planMode ? "on" : "off"}`,
+  ].join(" · ");
+}
+
 function filterMonitorTasks(tasks: BridgeTask[], showLocalImportedTasks: boolean): BridgeTask[] {
   return showLocalImportedTasks ? tasks : tasks.filter((task) => Boolean(task.feishuBinding));
 }
@@ -168,6 +182,7 @@ export function buildMonitorState(
       isFeishuBound: Boolean(task.feishuBinding),
       badges: taskBadges(task),
       description: taskDescription(task),
+      executionSummary: taskExecutionSummary(task),
     })),
     selectedTask: selectedTask
       ? {

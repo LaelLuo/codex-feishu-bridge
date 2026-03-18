@@ -48,6 +48,13 @@ describe("monitor model", () => {
     task.updatedAt = "2026-03-18T00:00:03.000Z";
     task.taskOrigin = "vscode";
     task.desktopReplySyncToFeishu = true;
+    task.executionProfile = {
+      model: "gpt-5.4-mini",
+      effort: "high",
+      planMode: true,
+      sandbox: "workspace-write",
+      approvalPolicy: "on-request",
+    };
     task.feishuBinding = {
       chatId: "oc_chat",
       threadKey: "omt_thread",
@@ -85,6 +92,10 @@ describe("monitor model", () => {
       ["FEISHU", "VSCODE"],
     );
     assert.doesNotMatch(state.tasks[0]?.description ?? "", /Feishu/i);
+    assert.equal(
+      state.tasks[0]?.executionSummary,
+      "Model: gpt-5.4-mini · Reasoning: high · Plan: on",
+    );
     assert.equal(state.selectedTask?.desktopReplySyncToFeishu, true);
     assert.equal(state.selectedTask?.taskOrigin, "vscode");
     assert.deepEqual(
@@ -167,5 +178,33 @@ describe("monitor model", () => {
     assert.equal(expandedState.taskCount, 2);
     assert.equal(expandedState.hiddenTaskCount, 0);
     assert.equal(expandedState.showLocalImportedTasks, true);
+  });
+
+  it("uses readable execution defaults in task cards when no explicit profile is set", () => {
+    const task = createBridgeTask({
+      threadId: "thr-default-profile",
+      title: "Default profile task",
+      workspaceRoot: "/tmp/workspace",
+      mode: "bridge-managed",
+      createdAt: "2026-03-18T00:00:00.000Z",
+    });
+    task.updatedAt = "2026-03-18T00:00:03.000Z";
+    task.feishuBinding = {
+      chatId: "oc_chat",
+      threadKey: "omt_thread",
+    };
+
+    const snapshot = {
+      ...createEmptySnapshot(),
+      connection: "connected" as const,
+      tasks: [task],
+      lastUpdatedAt: "2026-03-18T00:00:03.000Z",
+    };
+
+    const state = buildMonitorState(snapshot, task.taskId);
+    assert.equal(
+      state.tasks[0]?.executionSummary,
+      "Model: runtime-default · Reasoning: model-default · Plan: off",
+    );
   });
 });
