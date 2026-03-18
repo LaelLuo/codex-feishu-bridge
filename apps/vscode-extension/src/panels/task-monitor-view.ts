@@ -772,6 +772,7 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
                 <button data-action="retry">Retry</button>
                 <button \${task.feishuBinding ? "" : "disabled"} data-action="unbind">Unbind</button>
                 <button \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task">Forget Local</button>
+                <button class="danger" \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task">Delete Local</button>
               </div>
             </div>
             \${task.latestSummary ? \`<div class="panel" style="margin-top: 12px; padding: 12px;"><div class="eyebrow">Latest Summary</div>\${pre(task.latestSummary)}</div>\` : ""}

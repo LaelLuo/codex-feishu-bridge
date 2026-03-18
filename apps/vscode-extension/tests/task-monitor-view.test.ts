@@ -19,6 +19,8 @@ describe("task monitor view source", () => {
     const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
     const source = readFileSync(sourcePath, "utf8");
 
+    assert.match(source, /data-action="forget-local-task">Forget Local<\/button>/);
+    assert.match(source, /data-action="forget-local-task">Delete Local<\/button>/);
     assert.doesNotMatch(source, /window\.confirm\(/);
     assert.match(source, /case "forget-imported-tasks":\s*vscode\.postMessage\(\{ type: "forget-imported-tasks" \}\);\s*return;/s);
     assert.match(source, /case "forget-local-task":[\s\S]*vscode\.postMessage\(\{ type: "forget-local-task", taskId \}\);\s*return;/s);
