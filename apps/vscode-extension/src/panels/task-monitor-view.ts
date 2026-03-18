@@ -224,6 +224,16 @@ export class TaskMonitorPanel implements vscode.Disposable {
           await this.options.store.refresh();
           return;
         }
+        case "bind-new-feishu-topic": {
+          const task = this.getTask(payload.taskId);
+          if (!task || task.feishuBinding) {
+            return;
+          }
+          await this.options.client.bindTaskToNewFeishuTopic(task.taskId);
+          await this.options.store.refresh();
+          await vscode.window.showInformationMessage("Created a new Feishu topic and bound this task.");
+          return;
+        }
         case "resolve-approval": {
           const task = this.getTask(payload.taskId);
           if (!task || !payload.requestId || !payload.decision) {
@@ -571,15 +581,23 @@ export class TaskMonitorPanel implements vscode.Disposable {
       }
       .task-row-shell {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
-        gap: 8px;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
         align-items: stretch;
+      }
+      .task-row-shell.multi-select-enabled {
+        grid-template-columns: auto minmax(0, 1fr);
       }
       .task-row-selector {
         display: flex;
         align-items: center;
         justify-content: center;
         min-width: 20px;
+      }
+      .task-row-selector-spacer {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
       }
       .task-row {
         display: grid;
@@ -591,6 +609,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
         padding: 10px 12px;
         width: 100%;
         text-align: left;
+      }
+      .task-row-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
       }
       .task-row.selected {
         background: var(--accent-soft);
@@ -614,6 +638,9 @@ export class TaskMonitorPanel implements vscode.Disposable {
         flex-wrap: wrap;
         gap: 6px;
         align-items: center;
+      }
+      .task-badges {
+        justify-content: flex-end;
       }
       .hero-badges {
         justify-content: flex-end;
@@ -790,6 +817,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
       };
       let conversationScrollByTask = {};
       let selectedLocalTaskIds = {};
+      let multiSelectMode = false;
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -928,39 +956,74 @@ export class TaskMonitorPanel implements vscode.Disposable {
         }
 
         return state.tasks
-          .map((task) => \`
-            <div class="task-row-shell">
-              <div class="task-row-selector">
-                <input
-                  type="checkbox"
-                  data-action="toggle-local-task-selection"
+          .map((task) => {
+            const selector = multiSelectMode
+              ? \`<div class="task-row-selector">\${
+                  task.isFeishuBound
+                    ? '<span class="task-row-selector-spacer"></span>'
+                    : \`<input
+                        type="checkbox"
+                        data-action="toggle-local-task-selection"
+                        data-task-id="\${escapeHtml(task.taskId)}"
+                        title="Select this local-only task for bulk forget or delete actions."
+                        \${selectedLocalTaskIds[task.taskId] ? "checked" : ""}
+                      />\`
+                }</div>\`
+              : "";
+
+            return \`
+              <div class="task-row-shell \${multiSelectMode ? "multi-select-enabled" : ""}">
+                \${selector}
+                <button
+                  class="task-row \${task.isSelected ? "selected" : ""}"
+                  data-action="select-task"
                   data-task-id="\${escapeHtml(task.taskId)}"
-                  \${selectedLocalTaskIds[task.taskId] ? "checked" : ""}
-                  \${task.isFeishuBound ? "disabled" : ""}
-                />
+                  title="Open this task in the monitor."
+                >
+                  <div class="task-row-main">
+                    <div class="meta">
+                      <strong>\${escapeHtml(task.title)}</strong>
+                      <span class="muted">\${escapeHtml(task.description)}</span>
+                    </div>
+                    <div class="task-badges">\${renderBadges(task.badges)}</div>
+                  </div>
+                </button>
               </div>
-              <button class="task-row \${task.isSelected ? "selected" : ""}" data-action="select-task" data-task-id="\${escapeHtml(task.taskId)}">
-                <div class="meta">
-                  <strong>\${escapeHtml(task.title)}</strong>
-                  <div class="task-badges">\${renderBadges(task.badges)}</div>
-                  <span class="muted">\${escapeHtml(task.description)}</span>
-                </div>
-              </button>
-            </div>
-          \`)
+            \`;
+          })
           .join("");
       }
 
       function taskSelectionToolbar() {
         const selection = localTaskSelectionSummary();
+        if (!multiSelectMode) {
+          return \`
+            <div class="sync-row" style="margin-bottom: 12px;">
+              <span class="muted">\${
+                selection.availableCount > 0
+                  ? "Bulk actions stay hidden until you turn on multi-select. Only local, non-Feishu tasks can be batch forgotten or deleted."
+                  : "No visible local-only tasks are available for bulk cleanup right now."
+              }</span>
+              <div class="actions">
+                <button
+                  data-action="toggle-multi-select"
+                  title="Show selection checkboxes for visible local-only tasks so you can batch forget or delete them."
+                  \${selection.availableCount > 0 ? "" : "disabled"}
+                >Multi-select</button>
+              </div>
+            </div>
+          \`;
+        }
+
         return \`
           <div class="sync-row" style="margin-bottom: 12px;">
             <span class="muted">\${escapeHtml(String(selection.selectedCount))} local task(s) selected for bulk actions.</span>
             <div class="actions">
-              <button data-action="select-visible-local-tasks" \${selection.availableCount > 0 ? "" : "disabled"}>Select Visible Local</button>
-              <button data-action="clear-local-task-selection" \${selection.selectedCount > 0 ? "" : "disabled"}>Clear Selection</button>
-              <button data-action="forget-local-tasks" \${selection.selectedCount > 0 ? "" : "disabled"}>Forget Selected</button>
-              <button class="danger" data-action="delete-local-tasks" \${selection.selectedCount > 0 ? "" : "disabled"}>Delete Selected</button>
+              <button data-action="toggle-multi-select" title="Leave multi-select mode and hide the task checkboxes.">Done</button>
+              <button data-action="select-visible-local-tasks" title="Select every visible local-only task in the current list." \${selection.availableCount > 0 ? "" : "disabled"}>Select Visible Local</button>
+              <button data-action="clear-local-task-selection" title="Clear the current multi-select choice without changing any tasks." \${selection.selectedCount > 0 ? "" : "disabled"}>Clear Selection</button>
+              <button data-action="forget-local-tasks" title="Remove the selected local-only task records from the monitor while keeping the underlying Codex threads on disk." \${selection.selectedCount > 0 ? "" : "disabled"}>Forget Selected</button>
+              <button class="danger" data-action="delete-local-tasks" title="Permanently delete the selected local-only tasks and their underlying Codex threads from this computer." \${selection.selectedCount > 0 ? "" : "disabled"}>Delete Selected</button>
             </div>
           </div>
         \`;
@@ -1004,9 +1067,9 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <code>\${escapeHtml(approval.requestId)}</code>
               \${approval.state === "pending"
                 ? \`<div class="approval-actions">
-                    <button class="primary" data-action="resolve-approval" data-decision="accept" data-request-id="\${escapeHtml(approval.requestId)}">Approve</button>
-                    <button data-action="resolve-approval" data-decision="decline" data-request-id="\${escapeHtml(approval.requestId)}">Decline</button>
-                    <button class="danger" data-action="resolve-approval" data-decision="cancel" data-request-id="\${escapeHtml(approval.requestId)}">Cancel</button>
+                    <button class="primary" data-action="resolve-approval" data-decision="accept" data-request-id="\${escapeHtml(approval.requestId)}" title="Approve this pending request and let Codex continue.">Approve</button>
+                    <button data-action="resolve-approval" data-decision="decline" data-request-id="\${escapeHtml(approval.requestId)}" title="Decline this pending request and tell Codex not to proceed with it.">Decline</button>
+                    <button class="danger" data-action="resolve-approval" data-decision="cancel" data-request-id="\${escapeHtml(approval.requestId)}" title="Cancel this pending request and mark it as cancelled.">Cancel</button>
                   </div>\`
                 : ""}
             </article>
@@ -1026,7 +1089,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <strong>\${escapeHtml(diff.path)}</strong>
               <span class="muted">\${escapeHtml(diff.summary)}</span>
               <div class="diff-actions">
-                <button data-action="open-diff" data-diff-path="\${escapeHtml(diff.path)}">Open diff</button>
+                <button data-action="open-diff" data-diff-path="\${escapeHtml(diff.path)}" title="Open this captured diff in the VSCode diff view.">Open Diff</button>
               </div>
             </article>
           \`)
@@ -1036,7 +1099,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
       function foldout(section, title, count, content) {
         return \`
           <details class="panel foldout" data-section="\${escapeHtml(section)}" \${sectionState[section] ? "open" : ""}>
-            <summary>
+            <summary title="Show or hide \${escapeHtml(title.toLowerCase())} for the selected task.">
               <div class="foldout-title">
                 <div class="eyebrow" style="margin-bottom:0;">\${escapeHtml(title)}</div>
                 <span class="chip">\${escapeHtml(String(count))}</span>
@@ -1177,17 +1240,18 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <div class="metric"><strong>Feishu Thread</strong><span>\${escapeHtml(task.feishuBinding?.threadKey ?? "unbound")}</span></div>
             </div>
             <div class="sync-row" style="margin-top: 12px;">
-              <label class="toggle">
+              <label class="toggle" title="When enabled, desktop-side agent replies keep posting back into the bound Feishu thread.">
                 <input id="sync-toggle" type="checkbox" data-action="toggle-feishu-sync" \${task.desktopReplySyncToFeishu ? "checked" : ""} \${task.feishuBinding ? "" : "disabled"} />
                 <span>Desktop replies continue syncing back to Feishu</span>
               </label>
               <div class="actions">
-                <button data-action="open-status">Status</button>
-                <button class="danger" data-action="interrupt">Interrupt</button>
-                <button data-action="retry">Retry</button>
-                <button \${task.feishuBinding ? "" : "disabled"} data-action="unbind">Unbind</button>
-                <button \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task">Forget Local</button>
-                <button class="danger" \${task.canForgetLocalTask ? "" : "disabled"} data-action="delete-local-task">Delete Local</button>
+                <button data-action="open-status" title="Open the bridge status page for daemon health, account, and runtime limits.">View Status</button>
+                <button class="danger" data-action="interrupt" title="Stop the task's active Codex turn as soon as the runtime accepts the interrupt.">Stop Turn</button>
+                <button data-action="retry" title="Ask Codex to retry the last turn and keep working on the same task.">Retry Last Turn</button>
+                <button \${task.feishuBinding ? "disabled" : ""} data-action="bind-new-feishu-topic" title="Create a new topic in the default Feishu group and bind this task to it for mobile follow-up.">Bind to New Feishu Topic</button>
+                <button \${task.feishuBinding ? "" : "disabled"} data-action="unbind" title="Detach this task from its current Feishu thread without deleting local task data.">Unbind Feishu</button>
+                <button \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task" title="Remove this local task record from the monitor but keep the underlying Codex thread on disk.">Forget Local Copy</button>
+                <button class="danger" \${task.canForgetLocalTask ? "" : "disabled"} data-action="delete-local-task" title="Permanently delete this local task and its underlying Codex thread from this computer.">Delete Local Copy</button>
               </div>
             </div>
             \${task.latestSummary ? \`<div class="panel" style="margin-top: 12px; padding: 12px;"><div class="eyebrow">Latest Summary</div>\${pre(task.latestSummary)}</div>\` : ""}
@@ -1202,9 +1266,9 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <div class="composer-toolbar">
                 <span class="muted">Task-scoped draft, local image attachments, and <code>Ctrl/Cmd+Enter</code> to send.</span>
                 <div class="composer-actions">
-                  <button data-action="pick-composer-images">Attach Images</button>
-                  <button data-action="clear-composer" \${currentComposerDraft() || currentComposerImagePaths().length ? "" : "disabled"}>Clear</button>
-                  <button class="primary" data-action="send-message">Send</button>
+                  <button data-action="pick-composer-images" title="Attach local images from this computer to the next desktop-side message.">Attach Images</button>
+                  <button data-action="clear-composer" title="Clear the current draft text and attached images for this task." \${currentComposerDraft() || currentComposerImagePaths().length ? "" : "disabled"}>Clear Draft</button>
+                  <button class="primary" data-action="send-message" title="Send the current desktop message into this Codex task.">Send Message</button>
                 </div>
               </div>
               <div class="composer-attachments">\${composerAttachmentList()}</div>
@@ -1239,16 +1303,16 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <div class="metric"><strong>Last synced</strong><span>\${escapeHtml(formatLastUpdatedAt())}</span></div>
             </div>
             <div class="actions" style="margin-top: 12px;">
-              <label class="toggle">
+              <label class="toggle" title="Choose how many recent host-side Codex threads to import into the monitor.">
                 <span class="muted">Import count</span>
                 <input id="import-limit" class="inline-input" type="number" min="1" max="50" value="\${escapeHtml(String(importRecentLimit))}" />
               </label>
-              <button data-action="import-recent-threads">Import Recent Host Threads</button>
-              <button data-action="forget-imported-tasks">Clear Imported Local Tasks</button>
-              <button data-action="refresh">Refresh Tasks</button>
+              <button data-action="import-recent-threads" title="Import recent host-side Codex threads into the bridge monitor without deleting anything from ~/.codex.">Import Recent Host Threads</button>
+              <button data-action="forget-imported-tasks" title="Clear imported local-only task records from the monitor while keeping the underlying host Codex threads on disk.">Clear Imported Local Tasks</button>
+              <button data-action="refresh" title="Re-fetch the current daemon snapshot and any host-thread updates.">Refresh Tasks</button>
             </div>
             <div class="sync-row" style="margin-top: 12px;">
-              <label class="toggle">
+              <label class="toggle" title="Show unbound local tasks too, including imported CLI threads and desktop-started tasks that have not been bound to Feishu yet.">
                 <input type="checkbox" data-action="toggle-local-imported-tasks" \${state.showLocalImportedTasks ? "checked" : ""} />
                 <span>Show local imported tasks</span>
               </label>
@@ -1356,6 +1420,13 @@ export class TaskMonitorPanel implements vscode.Disposable {
           case "select-task":
             vscode.postMessage({ type: "select-task", taskId: target.dataset.taskId });
             return;
+          case "toggle-multi-select":
+            multiSelectMode = !multiSelectMode;
+            if (!multiSelectMode) {
+              selectedLocalTaskIds = {};
+            }
+            render();
+            return;
           case "select-visible-local-tasks":
             state.tasks.forEach((task) => {
               if (!task.isFeishuBound) {
@@ -1409,6 +1480,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
           }
           case "interrupt":
           case "retry":
+          case "bind-new-feishu-topic":
           case "unbind":
             if (!taskId) {
               return;

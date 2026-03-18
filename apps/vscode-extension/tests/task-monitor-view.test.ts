@@ -10,7 +10,7 @@ describe("task monitor view source", () => {
     const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
     const source = readFileSync(sourcePath, "utf8");
 
-    assert.match(source, /<button data-action="import-recent-threads">Import Recent Host Threads<\/button>/);
+    assert.match(source, /<button data-action="import-recent-threads"[\s\S]*>Import Recent Host Threads<\/button>/);
     assert.match(source, /id="import-limit"/);
     assert.match(source, /vscode\.postMessage\(\{ type: "import-recent-threads", limit: importRecentLimit \}\);/);
   });
@@ -20,8 +20,8 @@ describe("task monitor view source", () => {
     const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
     const source = readFileSync(sourcePath, "utf8");
 
-    assert.match(source, /data-action="forget-local-task">Forget Local<\/button>/);
-    assert.match(source, /data-action="delete-local-task">Delete Local<\/button>/);
+    assert.match(source, /data-action="forget-local-task"[\s\S]*>Forget Local Copy<\/button>/);
+    assert.match(source, /data-action="delete-local-task"[\s\S]*>Delete Local Copy<\/button>/);
     assert.match(source, /data-action="forget-local-tasks"[\s\S]*>Forget Selected<\/button>/);
     assert.match(source, /data-action="delete-local-tasks"[\s\S]*>Delete Selected<\/button>/);
     assert.doesNotMatch(source, /window\.confirm\(/);
@@ -44,9 +44,26 @@ describe("task monitor view source", () => {
 
     assert.match(source, /foldout\("approvals"/);
     assert.match(source, /foldout\("diffs"/);
-    assert.match(source, /data-action="pick-composer-images">Attach Images<\/button>/);
+    assert.match(source, /data-action="pick-composer-images"[\s\S]*>Attach Images<\/button>/);
     assert.match(source, /data-action="clear-composer"/);
     assert.match(source, /Ctrl\/Cmd\+Enter/);
+  });
+
+  it("adds explicit task handoff, multi-select, and action tooltip affordances to the monitor", () => {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
+    const source = readFileSync(sourcePath, "utf8");
+
+    assert.match(source, /let multiSelectMode = false;/);
+    assert.match(source, /data-action="toggle-multi-select"/);
+    assert.match(source, /case "toggle-multi-select":/);
+    assert.match(source, /data-action="bind-new-feishu-topic"/);
+    assert.match(source, /Created a new Feishu topic and bound this task\./);
+    assert.match(source, /View Status<\/button>/);
+    assert.match(source, /Stop Turn<\/button>/);
+    assert.match(source, /Retry Last Turn<\/button>/);
+    assert.match(source, /title="Create a new topic in the default Feishu group and bind this task to it for mobile follow-up\."/);
+    assert.match(source, /title="Re-fetch the current daemon snapshot and any host-thread updates\."/);
   });
 
   it("renders task origin badges alongside feishu bindings in the monitor cards", () => {
@@ -57,6 +74,7 @@ describe("task monitor view source", () => {
     assert.match(source, /function renderBadges\(badges\)/);
     assert.equal(source.includes('<div class="task-badges">\\${renderBadges(task.badges)}</div>'), true);
     assert.equal(source.includes('<div class="hero-badges">\\${renderBadges(task.badges)}</div>'), true);
+    assert.match(source, /\.task-row-main/);
     assert.match(source, /\.badge\.cli/);
   });
 
