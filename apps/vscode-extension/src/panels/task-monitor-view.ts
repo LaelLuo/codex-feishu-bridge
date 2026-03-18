@@ -796,6 +796,8 @@ export class TaskMonitorPanel implements vscode.Disposable {
         overflow: auto;
         padding-right: 4px;
         scroll-behavior: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
       }
       .message {
         border: 1px solid var(--border);
@@ -991,6 +993,10 @@ export class TaskMonitorPanel implements vscode.Disposable {
         diffs: false,
       };
       let conversationScrollByTask = {};
+      let queuedStateMessage = null;
+      let conversationPointerActive = false;
+      let conversationInteractionLocked = false;
+      let conversationInteractionTimer = undefined;
       let selectedLocalTaskIds = {};
       let multiSelectMode = false;
       let pendingActionRequestIds = {};
@@ -1238,6 +1244,70 @@ export class TaskMonitorPanel implements vscode.Disposable {
           return;
         }
         conversation.scrollTop = Math.min(saved.scrollTop, Math.max(0, conversation.scrollHeight - conversation.clientHeight));
+      }
+
+      function applyIncomingStateMessage(message) {
+        finishAllPendingActions();
+        state = message.state;
+        if (state.selectedTask?.taskId && !composerExecutionProfiles[state.selectedTask.taskId]) {
+          composerExecutionProfiles[state.selectedTask.taskId] = defaultComposerExecutionProfile();
+        }
+        trimSelectedLocalTasks();
+        render();
+        if (message.focusComposer) {
+          const composer = document.getElementById("composer");
+          if (composer) {
+            composer.focus();
+          }
+        }
+      }
+
+      function flushQueuedStateMessage() {
+        if (!queuedStateMessage) {
+          return;
+        }
+        const message = queuedStateMessage;
+        queuedStateMessage = null;
+        applyIncomingStateMessage(message);
+      }
+
+      function setConversationInteractionLocked(locked) {
+        conversationInteractionLocked = locked;
+      }
+
+      function scheduleConversationInteractionRelease() {
+        if (conversationInteractionTimer !== undefined) {
+          window.clearTimeout(conversationInteractionTimer);
+        }
+        conversationInteractionTimer = window.setTimeout(() => {
+          if (conversationPointerActive) {
+            return;
+          }
+          setConversationInteractionLocked(false);
+          flushQueuedStateMessage();
+        }, 180);
+      }
+
+      function beginConversationInteraction() {
+        setConversationInteractionLocked(true);
+      }
+
+      function noteConversationInteraction() {
+        beginConversationInteraction();
+        scheduleConversationInteractionRelease();
+      }
+
+      function handleConversationPointerDown() {
+        conversationPointerActive = true;
+        beginConversationInteraction();
+      }
+
+      function handleConversationPointerUp() {
+        if (!conversationPointerActive) {
+          return;
+        }
+        conversationPointerActive = false;
+        scheduleConversationInteractionRelease();
       }
 
       function resizeComposer() {
@@ -1870,8 +1940,18 @@ export class TaskMonitorPanel implements vscode.Disposable {
 
         const conversation = document.getElementById("conversation-list");
         if (conversation instanceof HTMLElement) {
+          conversation.addEventListener("pointerdown", () => {
+            handleConversationPointerDown();
+          });
+          conversation.addEventListener("wheel", () => {
+            noteConversationInteraction();
+          }, { passive: true });
+          conversation.addEventListener("touchstart", () => {
+            noteConversationInteraction();
+          }, { passive: true });
           conversation.addEventListener("scroll", () => {
             captureConversationScroll();
+            noteConversationInteraction();
           });
         }
 
@@ -1920,19 +2000,25 @@ export class TaskMonitorPanel implements vscode.Disposable {
         if (event.data?.type !== "state") {
           return;
         }
-        finishAllPendingActions();
-        state = event.data.state;
-        if (state.selectedTask?.taskId && !composerExecutionProfiles[state.selectedTask.taskId]) {
-          composerExecutionProfiles[state.selectedTask.taskId] = defaultComposerExecutionProfile();
+        if (conversationInteractionLocked) {
+          queuedStateMessage = event.data;
+          return;
         }
-        trimSelectedLocalTasks();
-        render();
-        if (event.data.focusComposer) {
-          const composer = document.getElementById("composer");
-          if (composer) {
-            composer.focus();
-          }
-        }
+        applyIncomingStateMessage(event.data);
+      });
+
+      window.addEventListener("pointerup", () => {
+        handleConversationPointerUp();
+      });
+
+      window.addEventListener("pointercancel", () => {
+        handleConversationPointerUp();
+      });
+
+      window.addEventListener("blur", () => {
+        conversationPointerActive = false;
+        setConversationInteractionLocked(false);
+        flushQueuedStateMessage();
       });
 
       document.addEventListener("click", (event) => {

@@ -131,6 +131,24 @@ describe("task monitor view source", () => {
     assert.match(source, /return "via " \+ String\(message\.surface \?\? "runtime"\)\.toUpperCase\(\);/);
   });
 
+  it("defers state re-renders while the user is actively scrolling conversation history", () => {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
+    const source = readFileSync(sourcePath, "utf8");
+
+    assert.match(source, /let queuedStateMessage = null;/);
+    assert.match(source, /let conversationPointerActive = false;/);
+    assert.match(source, /let conversationInteractionLocked = false;/);
+    assert.match(source, /function applyIncomingStateMessage\(message\)/);
+    assert.match(source, /function flushQueuedStateMessage\(\)/);
+    assert.match(source, /function handleConversationPointerDown\(\)/);
+    assert.match(source, /function handleConversationPointerUp\(\)/);
+    assert.match(source, /conversation\.addEventListener\("pointerdown"/);
+    assert.match(source, /conversation\.addEventListener\("scroll", \(\) => {\s*captureConversationScroll\(\);\s*noteConversationInteraction\(\);\s*}\);/s);
+    assert.match(source, /if \(conversationInteractionLocked\) {\s*queuedStateMessage = event\.data;\s*return;\s*}/s);
+    assert.match(source, /window\.addEventListener\("pointerup", \(\) => {\s*handleConversationPointerUp\(\);\s*}\);/s);
+  });
+
   it("renders the monitor as an editor panel entry point instead of a sidebar view contribution", () => {
     const currentDir = path.dirname(fileURLToPath(import.meta.url));
     const packagePath = path.resolve(currentDir, "../package.json");
