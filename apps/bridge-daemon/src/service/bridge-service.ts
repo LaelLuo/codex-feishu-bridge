@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import {
   createBridgeEvent,
   createBridgeTask,
+  type ApprovalPolicy,
   type ApprovalState,
   type BridgeEvent,
   type BridgeTask,
@@ -18,6 +19,7 @@ import {
   type MessageAuthor,
   type MessageSurface,
   type QueuedApproval,
+  type SandboxMode,
   type TaskAsset,
   type TaskExecutionProfile,
   type TaskDiffEntry,
@@ -50,6 +52,8 @@ const ACTIVE_TURN_START_TIMEOUT_MS = 8_000;
 const ACTIVE_TURN_RETRY_INTERVAL_MS = 250;
 const AGGREGATED_DIFF_PATH = "__aggregated_diff__";
 const AGENT_DIFF_SUMMARY = "Extracted from agent diff block";
+const SANDBOX_MODE_VALUES: readonly SandboxMode[] = ["read-only", "workspace-write", "danger-full-access"];
+const APPROVAL_POLICY_VALUES: readonly ApprovalPolicy[] = ["untrusted", "on-failure", "on-request", "never"];
 
 interface PersistedState {
   seq: number;
@@ -147,6 +151,14 @@ interface RolloutConversationSeed {
   author: MessageAuthor;
   content: string;
   createdAt: string;
+}
+
+function isSandboxMode(value: string | undefined): value is SandboxMode {
+  return typeof value === "string" && SANDBOX_MODE_VALUES.includes(value as SandboxMode);
+}
+
+function isApprovalPolicy(value: string | undefined): value is ApprovalPolicy {
+  return typeof value === "string" && APPROVAL_POLICY_VALUES.includes(value as ApprovalPolicy);
 }
 
 function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): TaskExecutionProfile {
@@ -657,11 +669,20 @@ export class BridgeService {
       task.queuedMessageCount = queuedMessages.length;
     }
 
+    let restoredImportedExecutionProfiles = false;
+    for (const task of this.tasks.values()) {
+      restoredImportedExecutionProfiles =
+        (await this.hydrateImportedTaskExecutionProfile(task)) || restoredImportedExecutionProfiles;
+    }
+
     this.unsubscribeRuntime = this.options.runtime.onNotification((notification) => {
       void this.handleRuntimeNotification(notification);
     });
 
     await this.reconcilePersistedTasks();
+    if (restoredImportedExecutionProfiles) {
+      await this.persistState();
+    }
     await this.refreshAccountState();
     await this.resumeQueuedMessagesAfterInitialize();
     this.startRuntimeSyncLoop();
@@ -753,6 +774,7 @@ export class BridgeService {
 
     for (const descriptor of candidates) {
       const task = this.upsertTaskFromDescriptor(descriptor, "manual-import");
+      await this.hydrateImportedTaskExecutionProfile(task);
       await this.hydrateImportedTaskConversation(task);
       this.touchTask(task, descriptor.updatedAt ?? descriptor.createdAt ?? task.updatedAt);
       imported.push(cloneTask(task));
@@ -835,6 +857,7 @@ export class BridgeService {
   async resumeTask(taskId: string): Promise<BridgeTask> {
     const descriptor = await this.options.runtime.resumeThread(taskId);
     const task = this.upsertTaskFromDescriptor(descriptor, this.tasks.get(taskId)?.mode ?? "manual-import");
+    await this.hydrateImportedTaskExecutionProfile(task);
     this.touchTask(task);
     await this.persistState();
     this.emitEvent(task.taskId, "task.resumed", { task: cloneTask(task) });
@@ -849,6 +872,7 @@ export class BridgeService {
     const imported: BridgeTask[] = [];
     for (const descriptor of descriptors) {
       const task = this.upsertTaskFromDescriptor(descriptor, this.tasks.get(descriptor.id)?.mode ?? "manual-import");
+      await this.hydrateImportedTaskExecutionProfile(task);
       await this.hydrateImportedTaskConversation(task);
       this.touchTask(task);
       imported.push(cloneTask(task));
@@ -941,6 +965,7 @@ export class BridgeService {
   }
 
   private async resumeImportedTaskBeforeMessage(task: BridgeTask): Promise<void> {
+    await this.hydrateImportedTaskExecutionProfile(task);
     if (!this.canRefreshImportedTaskConversation(task)) {
       return;
     }
@@ -1001,6 +1026,7 @@ export class BridgeService {
 
   async bindFeishuThread(taskId: string, binding: FeishuThreadBinding): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
+    await this.hydrateImportedTaskExecutionProfile(task);
     task.feishuBinding = binding;
     task.feishuBindingDisabled = false;
     task.desktopReplySyncToFeishu = true;
@@ -1645,6 +1671,10 @@ export class BridgeService {
     for (const task of this.tasks.values()) {
       const runtimeThread = runtimeThreadsById.get(task.threadId);
       let taskChanged = false;
+      if (await this.hydrateImportedTaskExecutionProfile(task)) {
+        changed = true;
+        taskChanged = true;
+      }
       if (!runtimeThread) {
         if (task.activeTurnId) {
           this.clearTurnTracking(task.activeTurnId);
@@ -1725,6 +1755,7 @@ export class BridgeService {
       }
 
       const task = this.upsertTaskFromDescriptor(descriptor, "manual-import");
+      await this.hydrateImportedTaskExecutionProfile(task);
       changed = true;
       updates.push({
         task: cloneTask(task),
@@ -2048,6 +2079,90 @@ export class BridgeService {
     }
 
     return messages;
+  }
+
+  private async hydrateImportedTaskExecutionProfile(task: BridgeTask): Promise<boolean> {
+    if (task.mode !== "manual-import") {
+      return false;
+    }
+
+    const currentProfile = normalizeExecutionProfile(task.executionProfile);
+    if (currentProfile.sandbox && currentProfile.approvalPolicy) {
+      return false;
+    }
+
+    const restoredProfile = await this.readThreadExecutionProfileFromStateDatabase(task.threadId);
+    const nextProfile = normalizeExecutionProfile({
+      ...restoredProfile,
+      ...currentProfile,
+    });
+    if (
+      nextProfile.sandbox === currentProfile.sandbox &&
+      nextProfile.approvalPolicy === currentProfile.approvalPolicy &&
+      nextProfile.model === currentProfile.model &&
+      nextProfile.effort === currentProfile.effort &&
+      nextProfile.planMode === currentProfile.planMode
+    ) {
+      return false;
+    }
+
+    task.executionProfile = nextProfile;
+    return true;
+  }
+
+  private async readThreadExecutionProfileFromStateDatabase(threadId: string): Promise<TaskExecutionProfile> {
+    const stateDbPath = path.join(this.options.config.codexHome, "state_5.sqlite");
+    if (!existsSync(stateDbPath)) {
+      return {};
+    }
+
+    try {
+      const raw = await this.runPythonSqliteScript(
+        `
+import json
+import os
+import sqlite3
+
+db_path = os.environ["BRIDGE_SQLITE_DB_PATH"]
+thread_id = os.environ["BRIDGE_SQLITE_THREAD_ID"]
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+result = {}
+table = cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'").fetchone()
+if table is not None:
+    columns = [row[1] for row in cur.execute("PRAGMA table_info(threads)")]
+    select_columns = []
+    if "sandbox_policy" in columns:
+        select_columns.append("sandbox_policy")
+    if "approval_mode" in columns:
+        select_columns.append("approval_mode")
+    if select_columns:
+        row = cur.execute(f"SELECT {', '.join(select_columns)} FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if row:
+            for index, column in enumerate(select_columns):
+                if row[index]:
+                    result[column] = row[index]
+conn.close()
+print(json.dumps(result))
+        `,
+        stateDbPath,
+        threadId,
+      );
+      const parsed = JSON.parse(raw.trim() || "{}") as {
+        sandbox_policy?: string;
+        approval_mode?: string;
+      };
+      return normalizeExecutionProfile({
+        ...(isSandboxMode(parsed.sandbox_policy) ? { sandbox: parsed.sandbox_policy } : {}),
+        ...(isApprovalPolicy(parsed.approval_mode) ? { approvalPolicy: parsed.approval_mode } : {}),
+      });
+    } catch (error) {
+      this.options.logger.warn("failed to restore imported task execution profile", {
+        threadId,
+        error,
+      });
+      return {};
+    }
   }
 
   private async findThreadRolloutPath(threadId: string): Promise<string | null> {

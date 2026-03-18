@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 
 import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bridge/shared";
+import type { ApprovalPolicy } from "@codex-feishu-bridge/protocol";
 
 import type {
   CodexAccountSnapshot,
@@ -34,6 +35,38 @@ async function waitFor(check: () => boolean, message: string): Promise<void> {
   throw new Error(`Timed out waiting for ${message}`);
 }
 
+function writeThreadStateRow(
+  config: ReturnType<typeof createTestBridgeConfig>,
+  params: {
+    threadId: string;
+    rolloutPath?: string;
+    sandboxPolicy?: string;
+    approvalMode?: string;
+  },
+): void {
+  const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+  stateDb.exec(`
+    CREATE TABLE IF NOT EXISTS threads (
+      id TEXT PRIMARY KEY,
+      rollout_path TEXT,
+      sandbox_policy TEXT,
+      approval_mode TEXT
+    )
+  `);
+  stateDb
+    .prepare(`
+      INSERT OR REPLACE INTO threads (id, rollout_path, sandbox_policy, approval_mode)
+      VALUES (?, ?, ?, ?)
+    `)
+    .run(
+      params.threadId,
+      params.rolloutPath ?? null,
+      params.sandboxPolicy ?? null,
+      params.approvalMode ?? null,
+    );
+  stateDb.close();
+}
+
 class FakeStatusRuntime implements CodexRuntime {
   readonly backend = "stdio";
   private listeners = new Set<(notification: CodexRuntimeNotification) => void>();
@@ -50,6 +83,7 @@ class FakeStatusRuntime implements CodexRuntime {
   ];
   private requiresResumeBeforeStartTurn = false;
   private readonly resumedThreadIds = new Set<string>();
+  private lastStartTurnApprovalPolicy: ApprovalPolicy | undefined;
 
   async start(): Promise<void> {}
 
@@ -123,10 +157,14 @@ class FakeStatusRuntime implements CodexRuntime {
     );
   }
 
-  async startTurn(params: { threadId: string }): Promise<CodexTurnDescriptor> {
+  async startTurn(params: {
+    threadId: string;
+    approvalPolicy?: ApprovalPolicy;
+  }): Promise<CodexTurnDescriptor> {
     if (this.requiresResumeBeforeStartTurn && !this.resumedThreadIds.has(params.threadId)) {
       throw new Error(`thread not found: ${params.threadId}`);
     }
+    this.lastStartTurnApprovalPolicy = params.approvalPolicy;
     return {
       id: "turn-1",
       threadId: params.threadId,
@@ -170,6 +208,10 @@ class FakeStatusRuntime implements CodexRuntime {
 
   hasResumedThread(threadId: string): boolean {
     return this.resumedThreadIds.has(threadId);
+  }
+
+  getLastStartTurnApprovalPolicy(): ApprovalPolicy | undefined {
+    return this.lastStartTurnApprovalPolicy;
   }
 }
 
@@ -218,6 +260,93 @@ describe("bridge service runtime status mapping", () => {
     const imported = await service.importThreads("thread-not-loaded");
     assert.equal(imported.length, 1);
     assert.equal(imported[0].status, "idle");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("restores sandbox and approval policy for imported host threads from codex state metadata", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-import-profile-test");
+    await prepareBridgeDirectories(config);
+
+    writeThreadStateRow(config, {
+      threadId: "thread-profile",
+      sandboxPolicy: "danger-full-access",
+      approvalMode: "never",
+    });
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-profile",
+        name: "Imported profile thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T03:00:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const imported = await service.importThreads("thread-profile");
+    assert.equal(imported.length, 1);
+    assert.equal(imported[0]?.executionProfile.sandbox, "danger-full-access");
+    assert.equal(imported[0]?.executionProfile.approvalPolicy, "never");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("uses the restored approval policy after binding an imported host thread to feishu", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-bind-profile-test");
+    await prepareBridgeDirectories(config);
+
+    writeThreadStateRow(config, {
+      threadId: "thread-bound-profile",
+      sandboxPolicy: "danger-full-access",
+      approvalMode: "never",
+    });
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-bound-profile",
+        name: "Bound profile thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T03:10:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    await service.importThreads("thread-bound-profile");
+    const bound = await service.bindFeishuThread("thread-bound-profile", {
+      chatId: "oc_chat",
+      threadKey: "omt_thread_bound_profile",
+      rootMessageId: "om_thread_bound_profile",
+    });
+    assert.equal(bound.executionProfile.sandbox, "danger-full-access");
+    assert.equal(bound.executionProfile.approvalPolicy, "never");
+
+    await service.sendMessage("thread-bound-profile", {
+      content: "Please inspect the local training data",
+      source: "feishu",
+      replyToFeishu: true,
+    });
+    assert.equal(runtime.getLastStartTurnApprovalPolicy(), "never");
 
     await service.dispose();
     await runtime.dispose();
