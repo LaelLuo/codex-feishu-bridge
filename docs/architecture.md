@@ -45,6 +45,8 @@
 - 负责移动端对话、审批和控制命令
 - 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
 - Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex
+- 已绑定任务卡提供 `View Status`、`Stop Turn`、`Retry Last Turn`、`Archive Task`、`Unbind Thread`
+- `Archive Task` 会终结当前 Feishu 话题的 bridge 绑定能力；后续同话题里的文本、图片、文件不会再继续同步到主机任务
 
 ## 目录结构
 
@@ -117,11 +119,12 @@
 - 重启时先加载持久化快照，再用 runtime 当前线程列表对账
 - 若 runtime 已回到 `idle/completed/failed/interrupted` 而本地仍有 `pending` approval，会自动转成 `expired`
 - Feishu webhook event id 持久化到 `stateDir/feishu-events.json`，用于重复回调去重
+- Feishu draft card、任务控制卡和 archived thread 状态也持久化到 `stateDir/feishu-events.json`
 
 ## CLI 包装器
 
 - 根脚本 `scripts/bridge-cli.mjs` 提供 `list`、`import`、`resume`、`send`
-- 根脚本 `scripts/dev-stack.sh` 提供 `up`、`down`、`status`、`logs` 的一键开发环境启动入口
+- 根脚本 `scripts/dev-stack.sh` 提供 `up`、`monitor`、`down`、`status`、`logs` 的一键开发环境启动入口
 - 在 `workspace-dev` 容器里使用时，daemon 地址默认应设为 `BRIDGE_BASE_URL=http://bridge-runtime:8787`
 
 ## Optional Coordination Utilities

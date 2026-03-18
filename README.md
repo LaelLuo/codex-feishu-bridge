@@ -44,21 +44,21 @@ FEISHU_DEFAULT_CHAT_ID=oc_xxx
 - 目标飞书群已经在群设置里开启“话题模式”
 - 飞书后台已经开启 long-connection 的 `im.message.receive_v1` 和 `card.action.trigger`
 
-### 2. 一键启动
+### 2. 一键启动并打开 monitor
 
 运行：
 
 ```bash
-./scripts/dev-stack.sh up
+./scripts/dev-stack.sh monitor
 ```
 
 如果你更习惯用 npm 命令，也可以运行：
 
 ```bash
-npm run start:all
+npm run monitor:all
 ```
 
-启动完成后，看到 `ready` 和 `http://127.0.0.1:8787/health` 就可以了。
+它会自动启动 bridge、等待 `/health` 就绪，并直接打开 monitor。
 
 ### 3. 一键在 VSCode 里使用
 
@@ -180,6 +180,7 @@ npm run stop:all
 根脚本 [scripts/dev-stack.sh](./scripts/dev-stack.sh) 提供：
 
 - `up`：准备环境、安装依赖、构建产物、启动 runtime、等待健康检查
+- `monitor`：完成 `up` 后自动打开 VSCode monitor
 - `down`：停止整套容器
 - `status`：查看 compose 状态和 `/health`
 - `logs`：跟随 `bridge-runtime` 日志
@@ -233,9 +234,9 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 
 推荐打开方式：
 
-1. 先运行 `./scripts/dev-stack.sh up`，或者直接在 VSCode 按 `F5`
-2. `F5` 会自动启动本地 bridge，并打开新的 `Extension Development Host`
-3. monitor 会在新窗口里自动打开
+1. 直接运行 `./scripts/dev-stack.sh monitor`
+2. 或者运行 `npm run monitor:all`
+3. 如果你本来就在 VSCode 里开发，也可以直接按 `F5`
 
 进入 monitor 后，可以按下面的顺序理解它：
 
@@ -372,6 +373,11 @@ FEISHU_DEFAULT_CHAT_ID=oc_xxx
 5. 点击 `Create on Host`
 6. 在同一线程里继续用普通文本对话
 7. 用控制卡处理状态、interrupt、retry、审批、解绑等动作
+
+其中有两个容易混淆的按钮：
+
+- `Unbind Thread`：只断开当前飞书线程和主机任务的绑定，这个话题之后还能继续起草新任务
+- `Archive Task`：归档并终结当前飞书话题，后续普通文本、照片、文件都不会再继续发到主机；如果还要做新工作，请在群里新开一个话题
 
 如果你已经在主机上跑着任务，另一个推荐路径是：
 

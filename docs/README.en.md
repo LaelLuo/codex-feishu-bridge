@@ -57,13 +57,13 @@ Before the first real Feishu run, make sure the target group has topic mode enab
 Use the one-click bootstrap entry by default:
 
 ```bash
-./scripts/dev-stack.sh up
+./scripts/dev-stack.sh monitor
 ```
 
 If you prefer npm commands, you can run:
 
 ```bash
-npm run start:all
+npm run monitor:all
 ```
 
 This path now handles:
@@ -74,6 +74,7 @@ This path now handles:
 - building `shared`, `protocol`, `bridge-daemon`, and `vscode-extension`
 - recreating `bridge-runtime`
 - waiting for `/health`
+- opening the monitor automatically
 
 Before the first real run, edit `docker/.env` if you need real Feishu credentials or real `stdio` runtime settings.
 
@@ -99,6 +100,7 @@ If you prefer explicit low-level Docker commands, they still work, but the repos
 The root script [scripts/dev-stack.sh](../scripts/dev-stack.sh) exposes:
 
 - `up` for environment preparation, install, build, runtime start, and health wait
+- `monitor` for the same bootstrap flow plus auto-opening the VSCode monitor
 - `down` for stopping the stack
 - `status` for compose status and `/health`
 - `logs` for following the bridge runtime logs
@@ -149,9 +151,9 @@ This is the main desktop entry for watching, taking over, organizing, and syncin
 
 Recommended way to open it:
 
-1. Run `./scripts/dev-stack.sh up`, or simply press `F5` in VSCode.
-2. `F5` bootstraps the local bridge first, then opens the Extension Development Host.
-3. The monitor opens automatically in that window.
+1. Run `./scripts/dev-stack.sh monitor`.
+2. Or run `npm run monitor:all`.
+3. If you are already developing in VSCode, you can still press `F5`.
 
 Read the monitor in this order:
 
@@ -291,6 +293,11 @@ The current Feishu workflow is:
 5. Press `Create on Host`.
 6. Continue the task with plain text in the same thread.
 7. Use the control card for status, interrupt, retry, approvals, inspect, and unbind actions.
+
+Two card actions have intentionally different meanings:
+
+- `Unbind Thread`: detach the current Feishu thread from the host task, but keep the topic reusable for drafting another task later
+- `Archive Task`: archive and end the current Feishu topic, so later plain text, photos, and files in that topic no longer reach the workstation
 
 If a task is already running on the host machine, another recommended path is:
 
