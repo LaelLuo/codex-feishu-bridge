@@ -54,9 +54,54 @@ Common mobile scenarios include:
 
 Before the first real Feishu run, make sure the target group has topic mode enabled in the group settings.
 
-### 1. Fill the minimum Feishu config
+### 1. Default one-click startup: `stdio`
 
-Edit `docker/.env` and at least set:
+Run:
+
+```bash
+./scripts/dev-stack.sh monitor
+```
+
+or:
+
+```bash
+npm run monitor:all
+```
+
+On the first run, the script auto-creates and auto-fills every detectable field in `docker/.env`, including:
+
+- `HOST_CODEX_HOME`
+- `HOST_CODEX_BIN_DIR`
+- `BRIDGE_CODEX_HOME`
+- `CODEX_RUNTIME_BACKEND=stdio`
+- `CODEX_APP_SERVER_BIN`
+
+If your current shell already exports these Feishu variables, the script also persists them into `docker/.env`:
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `FEISHU_DEFAULT_CHAT_ID`
+- `FEISHU_DEFAULT_CHAT_NAME`
+
+### 2. Host-visibility one-click startup: `socket-proxy`
+
+If you need the "start a full-access thread in the host CLI first, then import and bind it to Feishu" path, run:
+
+```bash
+./scripts/dev-stack.sh monitor socket-proxy
+```
+
+or:
+
+```bash
+npm run monitor:socket-proxy
+```
+
+This path also auto-fills `docker/.env` and switches the runtime-specific fields to `socket-proxy`.
+
+### 3. If needed, only fill the Feishu fields
+
+Edit `docker/.env` and usually just confirm:
 
 ```env
 FEISHU_APP_ID=your App ID
@@ -66,11 +111,17 @@ FEISHU_DEFAULT_CHAT_NAME=your Feishu group name
 
 If you already know the chat id, you can use `FEISHU_DEFAULT_CHAT_ID=oc_xxx` instead.
 
-### 2. Choose the Docker-host permission mode
+### 4. Confirm the Feishu prerequisites
+
+- the bot is already in the target group
+- the target group has topic mode enabled in group settings
+- the Feishu app has enabled `im.message.receive_v1` and `card.action.trigger`
+
+### 5. What the two Docker-host permission modes mean
 
 Both modes keep `bridge-daemon` inside Docker. The difference is where later turns execute.
 
-Set these shared values first:
+The script auto-fills these shared values too; if you want to verify them manually, look at:
 
 ```env
 HOST_CODEX_HOME=/home/you/.codex
@@ -102,17 +153,7 @@ CODEX_RUNTIME_PROXY_SOCKET=/workspace/codex-feishu-bridge/.tmp/codex-runtime-pro
 
 If this is your first run, choose `stdio`.
 
-### 3. One-click startup path A: start from the terminal and open the monitor
-
-```bash
-./scripts/dev-stack.sh monitor
-```
-
-If you prefer npm commands, you can run:
-
-```bash
-npm run monitor:all
-```
+### 6. What the one-click path does
 
 This path handles:
 
@@ -124,14 +165,14 @@ This path handles:
 - waiting for `/health`
 - opening the monitor automatically
 
-### 4. One-click startup path B: open the repo in VSCode and press `F5`
+### 7. One-click startup path B: open the repo in VSCode and press `F5`
 
 1. Open the repository in VSCode.
 2. Press `F5` on `Codex Feishu Bridge Extension`.
 3. The launch target now runs the same one-click bootstrap as a VSCode `preLaunchTask`.
 4. The Extension Development Host opens the monitor automatically.
 
-### 5. Start using Feishu
+### 8. Start using Feishu
 
 1. Confirm the target Feishu group already has topic mode enabled.
 2. Create a topic or send a plain-text message in the bot-enabled group.
@@ -153,11 +194,27 @@ If you prefer explicit low-level Docker commands, they still work, but the repos
 
 The root script [scripts/dev-stack.sh](../scripts/dev-stack.sh) exposes:
 
-- `up` for environment preparation, install, build, runtime start, and health wait
+- `up` for environment preparation, auto-filling `docker/.env`, install, build, runtime start, and health wait
 - `monitor` for the same bootstrap flow plus auto-opening the VSCode monitor
 - `down` for stopping the stack
 - `status` for compose status and `/health`
 - `logs` for following the bridge runtime logs
+
+If you want to force a specific runtime mode, you can also run:
+
+```bash
+./scripts/dev-stack.sh monitor stdio
+./scripts/dev-stack.sh monitor socket-proxy
+```
+
+Matching npm wrappers are available too:
+
+```bash
+npm run start:stdio
+npm run start:socket-proxy
+npm run monitor:stdio
+npm run monitor:socket-proxy
+```
 
 The VSCode launch entry in [`.vscode/launch.json`](../.vscode/launch.json) reuses the same bootstrap flow.
 It also auto-opens the monitor in the Extension Development Host.

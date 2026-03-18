@@ -14,7 +14,52 @@
 
 ## 最快开始
 
-### 1. 填最少配置
+### 1. 默认一键启动：`stdio`
+
+直接运行：
+
+```bash
+./scripts/dev-stack.sh monitor
+```
+
+或者：
+
+```bash
+npm run monitor:all
+```
+
+第一次运行时，脚本会自动创建并补齐 `docker/.env` 里所有能探测到的项，包括：
+
+- `HOST_CODEX_HOME`
+- `HOST_CODEX_BIN_DIR`
+- `BRIDGE_CODEX_HOME`
+- `CODEX_RUNTIME_BACKEND=stdio`
+- `CODEX_APP_SERVER_BIN`
+
+如果你当前 shell 里已经 `export` 了这些飞书变量，脚本也会顺手写进 `docker/.env`：
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `FEISHU_DEFAULT_CHAT_ID`
+- `FEISHU_DEFAULT_CHAT_NAME`
+
+### 2. 主机权限延续一键启动：`socket-proxy`
+
+如果你要处理“先在宿主机 CLI 起了 full-access 线程，之后再导入并绑定 Feishu”的场景，直接运行：
+
+```bash
+./scripts/dev-stack.sh monitor socket-proxy
+```
+
+或者：
+
+```bash
+npm run monitor:socket-proxy
+```
+
+这条命令也会自动补齐 `docker/.env`，并把运行时相关配置切到 `socket-proxy`。
+
+### 3. 如果需要，只补飞书这几项
 
 先打开：
 
@@ -22,7 +67,7 @@
 docker/.env
 ```
 
-至少填这 3 项：
+通常只需要确认这 3 项：
 
 ```env
 FEISHU_APP_ID=你的 App ID
@@ -38,17 +83,17 @@ FEISHU_DEFAULT_CHAT_NAME=你的飞书群名
 FEISHU_DEFAULT_CHAT_ID=oc_xxx
 ```
 
-另外只要确认三件事：
+### 4. 再确认飞书三件事
 
 - 机器人已经加入目标飞书群
 - 目标飞书群已经在群设置里开启“话题模式”
 - 飞书后台已经开启 long-connection 的 `im.message.receive_v1` 和 `card.action.trigger`
 
-### 2. 选择 Docker-主机权限模式
+### 5. 两种 Docker-主机权限模式到底有什么区别
 
 两种模式都保留 `bridge-daemon` 在 Docker 里运行，区别只在“后续 turn 到底在哪一侧执行”。
 
-先补这两个公共配置：
+脚本会自动补这两个公共配置；如果你想手工确认，看这两项：
 
 ```env
 HOST_CODEX_HOME=/home/you/.codex
@@ -80,30 +125,14 @@ CODEX_RUNTIME_PROXY_SOCKET=/workspace/codex-feishu-bridge/.tmp/codex-runtime-pro
 
 如果你只是第一次跑通项目，先选 `stdio` 即可。
 
-### 3. 一键启动方案 A：命令行直接启动并打开 monitor
-
-运行：
-
-```bash
-./scripts/dev-stack.sh monitor
-```
-
-如果你更习惯用 npm 命令，也可以运行：
-
-```bash
-npm run monitor:all
-```
-
-它会自动启动 bridge、等待 `/health` 就绪，并直接打开 monitor。
-
-### 4. 一键启动方案 B：在 VSCode 里按 `F5`
+### 6. 一键启动方案 B：在 VSCode 里按 `F5`
 
 1. 用 VSCode 打开这个仓库
 2. 直接按 `F5`
 3. 会自动弹出一个新的 VSCode 窗口
 4. monitor 会自动打开，不需要再手动运行命令
 
-### 5. 开始在飞书里用
+### 7. 开始在飞书里用
 
 1. 在有机器人的目标飞书群里确认已经开启“话题模式”，然后新建话题，或者先发一条普通文本
 2. bridge 会回复一张配置卡片
@@ -215,11 +244,27 @@ npm run stop:all
 
 根脚本 [scripts/dev-stack.sh](./scripts/dev-stack.sh) 提供：
 
-- `up`：准备环境、安装依赖、构建产物、启动 runtime、等待健康检查
+- `up`：准备环境、自动补齐 `docker/.env`、安装依赖、构建产物、启动 runtime、等待健康检查
 - `monitor`：完成 `up` 后自动打开 VSCode monitor
 - `down`：停止整套容器
 - `status`：查看 compose 状态和 `/health`
 - `logs`：跟随 `bridge-runtime` 日志
+
+如果你想显式切到某个模式，也可以直接这样运行：
+
+```bash
+./scripts/dev-stack.sh monitor stdio
+./scripts/dev-stack.sh monitor socket-proxy
+```
+
+对应的 npm 一键命令是：
+
+```bash
+npm run start:stdio
+npm run start:socket-proxy
+npm run monitor:stdio
+npm run monitor:socket-proxy
+```
 
 VSCode 的 [`.vscode/launch.json`](./.vscode/launch.json) 也已经挂上同一条启动任务，所以在仓库里按 `F5` 时，会先自动准备好本地 bridge 开发环境，并在新窗口里直接打开 monitor。
 
