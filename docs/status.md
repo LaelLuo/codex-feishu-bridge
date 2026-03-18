@@ -18,8 +18,8 @@
 - Implemented daemon task orchestration, WebSocket snapshots, uploads, and approvals
 - Implemented a VSCode desktop task dashboard with commands, diff viewing, status panel, and image upload flow
 - Implemented Feishu root-message binding, reply routing, signature/token checks, and duplicate webhook suppression
-- Reworked Feishu into pure-thread mode with explicit `/new` task creation, persisted execution profiles, and slash-command-only control routing
-- Removed Feishu status-summary push behavior so mobile threads only surface final agent replies, approvals, explicit errors, and command results
+- Reworked Feishu into pure-thread mode with thread-scoped drafts, persisted execution profiles, and long-connection card-first task creation
+- Removed Feishu status-summary push behavior so mobile threads only surface configuration cards, control cards, final agent replies, approvals, explicit errors, and necessary command results
 - Implemented manual thread import/resume plus a small CLI wrapper
 - Implemented recovery reconciliation and stale approval expiration on restart
 - Aligned the `stdio` runtime adapter with the live app-server schema for `thread/list`, timestamp normalization, object-shaped thread status, and `turn/steer`
@@ -37,6 +37,8 @@
 - Completed the Feishu live closeout path with the official SDK long-connection client, including ingress delivery, thread continuity, and live control-command routing for `interrupt`, `retry`, `cancel`, `approve`, and `decline`
 - Integrated the selected runtime, desktop, and Feishu closeout commits onto `master`, plus two integration fixes for worktree bootstrap behavior and Feishu webhook approval payload alignment
 - Collected QA final guidance as `conditional go`: no active blocker remains for the selected live path, but a few non-gating capabilities remain outside this round's proof boundary
+- Added long-connection `card.action.trigger` handling, draft/configuration cards for unbound threads, and control cards for bound threads
+- Kept slash commands as compatibility fallbacks while moving the recommended Feishu UX to card-first interaction
 
 ## Implemented But Not Yet Live-Validated
 
@@ -50,7 +52,7 @@
 - If the release bar widens, re-prove runtime manual import/resume on real `stdio`
 - If the release bar widens, capture standalone desktop live evidence for `login` and `retry`
 - If the compatibility path still matters, run a dedicated live pass for Feishu webhook/public-callback ingress
-- If the mobile UX needs widening, decide whether `/new` should stay explicit-only or eventually allow an opt-in auto-create policy
+- If the mobile UX needs widening further, decide whether the current card-first flow should stay explicit-only or eventually allow an opt-in auto-create policy
 - Decide whether to keep the current verbose Feishu ingress diagnostics as-is or tone them down after closeout
 - Optionally refresh QA-owned evidence snapshots if long-lived acceptance records are required beyond the coordinator closeout docs
 

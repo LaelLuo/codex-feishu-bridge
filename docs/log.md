@@ -105,3 +105,24 @@
   - no-noise unbound threads
   - bind/status/unbind regression
   - approval slash commands
+- Extended the Feishu long-connection ingress to register `card.action.trigger` alongside `im.message.receive_v1`.
+- Promoted the Feishu mobile surface from slash-first to card-first:
+  - the first unbound plain-text message now creates or refreshes a thread-scoped draft prompt
+  - the daemon replies with a configuration card instead of remaining silent
+  - configuration changes and task creation now round-trip through long-connection card actions
+- Added bound-thread control cards so the main mobile control surface now covers:
+  - status
+  - interrupt
+  - retry
+  - approvals
+  - unbind
+  - task / tasks / health / account / limits inspection
+- Preserved slash commands as compatibility fallbacks, but no longer treat them as the recommended Feishu workflow.
+- Kept the Feishu thread purity rule intact during the card-first migration:
+  - no task status-summary push
+  - no duplicate approval confirmation spam
+  - only cards, final agent replies, approvals, explicit errors, and necessary command results remain visible
+- Added Feishu long-connection test coverage for:
+  - first plain-text message -> draft card
+  - `card.action.trigger` model/effort updates
+  - card-driven task creation and follow-up routing

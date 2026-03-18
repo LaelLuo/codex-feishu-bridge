@@ -20,7 +20,7 @@ The OpenAI VSCode extension is not the runtime authority for this project.
 - The bridge daemon, VSCode frontend, Feishu bridge, manual import flow, and recovery hardening are implemented in the local development path.
 - `docs/plan.md` is the only execution-plan source for the repository.
 - The selected live-validation path is complete for `runtime`, `desktop`, and `feishu`.
-- Feishu threads now run in pure-conversation mode with explicit `/new` task creation and no background status-summary push.
+- Feishu threads now run in pure-conversation mode with card-first task creation, long-connection card actions, and no background status-summary push.
 
 ## Closeout Summary
 
@@ -221,11 +221,13 @@ Set `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and either `FEISHU_DEFAULT_CHAT_ID` or
 The current mobile workflow is:
 
 - start a new Feishu topic/thread
-- run `/new`
-- optionally refine the draft with `/new prompt ...`, `/new models`, `/new model ...`, `/new effort ...`, `/new sandbox ...`, and `/new approval ...`
-- run `/new create`
+- send the first plain-text message for the task you want to run
+- let `bridge-daemon` turn that text into a draft prompt and reply with a configuration card
+- use the card to choose model, reasoning effort, sandbox, and approval policy
+- press `Create Task`
 - continue the task with plain text in the same thread
-- use `/status`, `/interrupt`, `/retry`, `/approve`, `/decline`, `/cancel`, `/bind`, and `/unbind` as needed
+- use the task control card for status, interrupt, retry, approvals, inspect, and unbind actions
+- keep slash commands only as a compatibility fallback when card interaction is unavailable
 
 If you only know the group name, you can inspect or resolve visible chats with:
 
@@ -278,8 +280,22 @@ After restart, each agent should:
 - `bridge-daemon` starts the official SDK long-connection client automatically when those three values are present.
 - `FEISHU_VERIFICATION_TOKEN` and `FEISHU_ENCRYPT_KEY` are only required for the webhook compatibility path.
 - Local task creation no longer auto-creates Feishu root messages, and Feishu no longer receives background task status summaries.
-- Unbound plain text in a Feishu thread does nothing. Use `/new` to draft and create a new task or `/bind <taskId>` to attach an existing task.
-- `/new` is a thread-scoped wizard. It supports:
+- Unbound plain text in a Feishu thread now creates or refreshes a thread-scoped draft and replies with a configuration card.
+- The configuration card is the primary mobile UX. It lets you:
+  - review the current draft prompt
+  - choose model, reasoning effort, sandbox, and approval policy
+  - reset to defaults
+  - create or cancel the draft task
+- After task creation, the configuration card is replaced by a task control card for:
+  - status
+  - interrupt
+  - retry
+  - approvals
+  - unbind
+  - task, tasks, health, account, and limits inspection
+- Bound threads accept plain text as task input.
+- Card actions and text messages both travel through the official SDK long-connection client. Enable the relevant card action event subscription in the Feishu developer console.
+- Slash commands remain available as a compatibility fallback:
   - `/new`
   - `/new prompt <text>`
   - `/new models`
@@ -289,8 +305,15 @@ After restart, each agent should:
   - `/new approval <untrusted|on-failure|on-request|never>`
   - `/new create`
   - `/new cancel`
-- Bound threads accept plain text as task input and slash controls such as `/status`, `/interrupt`, `/retry`, `/approve`, `/decline`, `/cancel`, `/bind`, and `/unbind`.
-- Automatic system output is kept intentionally sparse: final agent replies, approval messages, explicit errors, and slash-command results.
+  - `/status`
+  - `/interrupt`
+  - `/retry [text]`
+  - `/approve [requestId]`
+  - `/decline [requestId]`
+  - `/cancel [requestId]`
+  - `/bind <taskId>`
+  - `/unbind`
+- Automatic system output is kept intentionally sparse: configuration cards, control cards, final agent replies, approval messages, explicit errors, and necessary command results.
 
 ## Repository Map
 
