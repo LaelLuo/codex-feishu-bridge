@@ -2,8 +2,9 @@ import { EventEmitter } from "node:events";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 
 import {
   createBridgeEvent,
@@ -48,6 +49,7 @@ const ACTIVE_TURN_START_TIMEOUT_MS = 8_000;
 const ACTIVE_TURN_RETRY_INTERVAL_MS = 250;
 const AGGREGATED_DIFF_PATH = "__aggregated_diff__";
 const AGENT_DIFF_SUMMARY = "Extracted from agent diff block";
+const IMPORTED_CONVERSATION_MESSAGE_LIMIT = 20;
 
 interface PersistedState {
   seq: number;
@@ -106,6 +108,12 @@ interface PendingTurnStart {
 interface PendingConversationSource {
   surface: MessageSurface;
   replyToFeishu: boolean;
+}
+
+interface RolloutConversationSeed {
+  author: MessageAuthor;
+  content: string;
+  createdAt: string;
 }
 
 function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): TaskExecutionProfile {
@@ -376,6 +384,77 @@ function hydrateTaskDiffs(task: BridgeTask): void {
   }
 }
 
+function fallbackConversationContent(imageCount: number): string {
+  if (imageCount <= 0) {
+    return "";
+  }
+
+  return imageCount === 1 ? "[local image]" : `[${imageCount} local images]`;
+}
+
+function parseRolloutConversationSeed(line: string): RolloutConversationSeed | null {
+  let record: unknown;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return null;
+  }
+
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+
+  const type = "type" in record ? (record as { type?: unknown }).type : undefined;
+  if (type !== "event_msg") {
+    return null;
+  }
+
+  const timestamp =
+    "timestamp" in record && typeof (record as { timestamp?: unknown }).timestamp === "string"
+      ? (record as { timestamp: string }).timestamp
+      : new Date().toISOString();
+  const payload = "payload" in record ? (record as { payload?: unknown }).payload : undefined;
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const payloadType = "type" in payload ? (payload as { type?: unknown }).type : undefined;
+  if (payloadType === "user_message") {
+    const message =
+      "message" in payload && typeof (payload as { message?: unknown }).message === "string"
+        ? (payload as { message: string }).message.trim()
+        : "";
+    const localImages =
+      "local_images" in payload && Array.isArray((payload as { local_images?: unknown[] }).local_images)
+        ? (payload as { local_images?: unknown[] }).local_images?.length ?? 0
+        : 0;
+    const content = message || fallbackConversationContent(localImages);
+    return content
+      ? {
+          author: "user",
+          content,
+          createdAt: timestamp,
+        }
+      : null;
+  }
+
+  if (payloadType === "agent_message") {
+    const message =
+      "message" in payload && typeof (payload as { message?: unknown }).message === "string"
+        ? (payload as { message: string }).message.trim()
+        : "";
+    return message
+      ? {
+          author: "agent",
+          content: message,
+          createdAt: timestamp,
+        }
+      : null;
+  }
+
+  return null;
+}
+
 export class BridgeService {
   private readonly emitter = new EventEmitter();
   private readonly tasks = new Map<string, BridgeTask>();
@@ -492,6 +571,7 @@ export class BridgeService {
 
     for (const descriptor of candidates) {
       const task = this.upsertTaskFromDescriptor(descriptor, "manual-import");
+      await this.hydrateImportedTaskConversation(task);
       this.touchTask(task, descriptor.updatedAt ?? descriptor.createdAt ?? task.updatedAt);
       imported.push(cloneTask(task));
       this.emitEvent(task.taskId, "task.updated", {
@@ -584,6 +664,7 @@ export class BridgeService {
     const imported: BridgeTask[] = [];
     for (const descriptor of descriptors) {
       const task = this.upsertTaskFromDescriptor(descriptor, this.tasks.get(descriptor.id)?.mode ?? "manual-import");
+      await this.hydrateImportedTaskConversation(task);
       this.touchTask(task);
       imported.push(cloneTask(task));
       this.emitEvent(task.taskId, "task.updated", {
@@ -1431,6 +1512,103 @@ export class BridgeService {
     if (rolloutPath) {
       await rm(rolloutPath, { force: true });
     }
+  }
+
+  private async hydrateImportedTaskConversation(task: BridgeTask): Promise<void> {
+    if (task.mode !== "manual-import" || task.conversation.length > 0) {
+      return;
+    }
+
+    try {
+      const rolloutPath = await this.findThreadRolloutPath(task.threadId);
+      if (!rolloutPath || !existsSync(rolloutPath)) {
+        return;
+      }
+
+      const messages = await this.readConversationFromRollout(rolloutPath);
+      if (messages.length === 0) {
+        return;
+      }
+
+      task.conversation = messages.map((message, index) => ({
+        messageId: `${task.threadId}:imported:${index}`,
+        author: message.author,
+        surface: "runtime",
+        content: message.content,
+        createdAt: message.createdAt,
+      }));
+      const latestAgentMessage = [...task.conversation].reverse().find((entry) => entry.author === "agent");
+      if (latestAgentMessage) {
+        task.latestSummary = latestAgentMessage.content;
+        hydrateTaskDiffs(task);
+      }
+    } catch (error) {
+      this.options.logger.warn("failed to hydrate imported task conversation", {
+        taskId: task.taskId,
+        threadId: task.threadId,
+        error,
+      });
+    }
+  }
+
+  private async readConversationFromRollout(rolloutPath: string): Promise<RolloutConversationSeed[]> {
+    const messages: RolloutConversationSeed[] = [];
+    const stream = createReadStream(rolloutPath, { encoding: "utf8" });
+    const lines = createInterface({
+      input: stream,
+      crlfDelay: Infinity,
+    });
+
+    try {
+      for await (const line of lines) {
+        const message = parseRolloutConversationSeed(line);
+        if (!message) {
+          continue;
+        }
+        messages.push(message);
+        if (messages.length > IMPORTED_CONVERSATION_MESSAGE_LIMIT) {
+          messages.shift();
+        }
+      }
+    } finally {
+      lines.close();
+      stream.close();
+    }
+
+    return messages;
+  }
+
+  private async findThreadRolloutPath(threadId: string): Promise<string | null> {
+    const stateDbPath = path.join(this.options.config.codexHome, "state_5.sqlite");
+    if (!existsSync(stateDbPath)) {
+      return null;
+    }
+
+    const rolloutPath = await this.runPythonSqliteScript(
+      `
+import os
+import sqlite3
+
+db_path = os.environ["BRIDGE_SQLITE_DB_PATH"]
+thread_id = os.environ["BRIDGE_SQLITE_THREAD_ID"]
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+rollout_path = ""
+table = cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'").fetchone()
+if table is not None:
+    columns = [row[1] for row in cur.execute("PRAGMA table_info(threads)")]
+    if "rollout_path" in columns:
+        row = cur.execute("SELECT rollout_path FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if row and row[0]:
+            rollout_path = row[0]
+conn.close()
+print(rollout_path)
+      `,
+      stateDbPath,
+      threadId,
+    );
+
+    return this.resolveCodexArtifactPath(rolloutPath.trim() || null);
   }
 
   private async deleteThreadFromStateDatabase(stateDbPath: string, threadId: string): Promise<string | null> {

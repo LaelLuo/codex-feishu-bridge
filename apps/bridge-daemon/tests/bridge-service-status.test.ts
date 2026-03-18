@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 
 import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bridge/shared";
 
@@ -287,6 +290,160 @@ describe("bridge service runtime status mapping", () => {
     assert.equal(service.getTask("thread-old"), null);
     assert.equal(service.getTask("thread-new")?.mode, "manual-import");
     assert.equal(service.getTask("thread-active")?.status, "running");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("hydrates recent conversation from rollout files when importing host threads", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-import-history-test");
+    await prepareBridgeDirectories(config);
+
+    const rolloutRelativePath = "sessions/2026/03/19/rollout-import-history.jsonl";
+    const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
+    await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
+    await writeFile(
+      rolloutDiskPath,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-19T00:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: "ignored developer context" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-19T00:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "First imported question",
+            local_images: [],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-19T00:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "First imported answer",
+            phase: "commentary",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-19T00:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "Second imported question",
+            local_images: [],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-19T00:00:04.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "Second imported answer",
+            phase: "final",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    stateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        rollout_path TEXT NOT NULL
+      )
+    `);
+    stateDb
+      .prepare("INSERT INTO threads (id, rollout_path) VALUES (?, ?)")
+      .run("thread-history", `/codex-home/${rolloutRelativePath}`);
+    stateDb.close();
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-history",
+        name: "Imported with history",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T00:10:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const imported = await service.importRecentRuntimeThreads(1);
+    assert.equal(imported.length, 1);
+    assert.deepEqual(
+      imported[0].conversation.map((entry) => ({
+        author: entry.author,
+        surface: entry.surface,
+        content: entry.content,
+      })),
+      [
+        { author: "user", surface: "runtime", content: "First imported question" },
+        { author: "agent", surface: "runtime", content: "First imported answer" },
+        { author: "user", surface: "runtime", content: "Second imported question" },
+        { author: "agent", surface: "runtime", content: "Second imported answer" },
+      ],
+    );
+    assert.equal(imported[0].latestSummary, "Second imported answer");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("tolerates missing rollout files when importing host threads", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-import-missing-rollout-test");
+    await prepareBridgeDirectories(config);
+
+    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    stateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        rollout_path TEXT NOT NULL
+      )
+    `);
+    stateDb
+      .prepare("INSERT INTO threads (id, rollout_path) VALUES (?, ?)")
+      .run("thread-missing-rollout", "/codex-home/sessions/2026/03/19/missing-rollout.jsonl");
+    stateDb.close();
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-missing-rollout",
+        name: "Missing rollout thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T00:20:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const imported = await service.importRecentRuntimeThreads(1);
+    assert.equal(imported.length, 1);
+    assert.deepEqual(imported[0].conversation, []);
 
     await service.dispose();
     await runtime.dispose();
