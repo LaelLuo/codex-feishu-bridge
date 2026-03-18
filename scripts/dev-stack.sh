@@ -12,6 +12,7 @@ runtime_proxy_dir="${repo_root}/.tmp/runtime-proxy"
 runtime_proxy_pid_file="${runtime_proxy_dir}/codex-runtime-proxy.pid"
 runtime_proxy_log_file="${runtime_proxy_dir}/codex-runtime-proxy.log"
 runtime_proxy_default_socket="${workspace_dir}/.tmp/codex-runtime-proxy.sock"
+runtime_proxy_launch_script="${runtime_proxy_dir}/launch-runtime-proxy.sh"
 command="${1:-up}"
 requested_backend="${2:-}"
 created_env_file=0
@@ -364,16 +365,30 @@ cleanup_runtime_proxy_pid_file() {
   rm -f "${runtime_proxy_pid_file}"
 }
 
+cleanup_runtime_proxy_socket_file() {
+  local runtime_proxy_socket
+  runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+  rm -f "${runtime_proxy_socket}"
+}
+
+cleanup_runtime_proxy_launch_script() {
+  rm -f "${runtime_proxy_launch_script}"
+}
+
 stop_runtime_proxy() {
   local pid
   pid="$(runtime_proxy_pid)"
   if [[ -z "${pid}" ]]; then
     cleanup_runtime_proxy_pid_file
+    cleanup_runtime_proxy_socket_file
+    cleanup_runtime_proxy_launch_script
     return
   fi
 
   if ! kill -0 "${pid}" >/dev/null 2>&1; then
     cleanup_runtime_proxy_pid_file
+    cleanup_runtime_proxy_socket_file
+    cleanup_runtime_proxy_launch_script
     return
   fi
 
@@ -381,6 +396,8 @@ stop_runtime_proxy() {
   for _ in $(seq 1 50); do
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
       cleanup_runtime_proxy_pid_file
+      cleanup_runtime_proxy_socket_file
+      cleanup_runtime_proxy_launch_script
       return
     fi
     sleep 0.2
@@ -388,6 +405,8 @@ stop_runtime_proxy() {
 
   kill -9 "${pid}" >/dev/null 2>&1 || true
   cleanup_runtime_proxy_pid_file
+  cleanup_runtime_proxy_socket_file
+  cleanup_runtime_proxy_launch_script
 }
 
 stop_runtime_proxy_if_running() {
@@ -404,7 +423,7 @@ wait_for_socket() {
 
   echo "[setup] Waiting for host Codex runtime proxy socket at ${socket_path}..."
   for _ in $(seq 1 60); do
-    if [[ -S "${socket_path}" ]]; then
+    if runtime_proxy_is_running && [[ -S "${socket_path}" ]] && probe_runtime_proxy_socket "${socket_path}"; then
       echo "[setup] Host Codex runtime proxy is ready."
       return
     fi
@@ -417,6 +436,31 @@ wait_for_socket() {
     tail -n 40 "${runtime_proxy_log_file}" >&2 || true
   fi
   exit 1
+}
+
+probe_runtime_proxy_socket() {
+  local socket_path="$1"
+
+  node -e '
+    const net = require("node:net");
+    const socketPath = process.argv[1];
+    const client = net.createConnection(socketPath);
+    const timer = setTimeout(() => {
+      client.destroy();
+      process.exit(1);
+    }, 750);
+
+    client.once("connect", () => {
+      clearTimeout(timer);
+      client.end();
+      process.exit(0);
+    });
+
+    client.once("error", () => {
+      clearTimeout(timer);
+      process.exit(1);
+    });
+  ' "${socket_path}" >/dev/null 2>&1
 }
 
 start_runtime_proxy_if_needed() {
@@ -442,9 +486,25 @@ start_runtime_proxy_if_needed() {
     export CODEX_HOME="${BRIDGE_CODEX_HOME}"
     export CODEX_APP_SERVER_BIN="$(resolve_host_codex_bin "${CODEX_APP_SERVER_BIN:-}")"
     : > "${runtime_proxy_log_file}"
-    nohup node "${repo_root}/apps/bridge-daemon/dist/runtime-socket-proxy.js" </dev/null >> "${runtime_proxy_log_file}" 2>&1 &
-    disown "$!" >/dev/null 2>&1 || true
-    printf '%s\n' "$!" > "${runtime_proxy_pid_file}"
+    cat > "${runtime_proxy_launch_script}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$\$" > "${runtime_proxy_pid_file}"
+cd "${repo_root}"
+export WORKSPACE_PATH="${repo_root}"
+export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
+export BRIDGE_CODEX_HOME="$(resolve_host_codex_home "${BRIDGE_CODEX_HOME:-}")"
+export CODEX_HOME="${BRIDGE_CODEX_HOME}"
+export CODEX_APP_SERVER_BIN="$(resolve_host_codex_bin "${CODEX_APP_SERVER_BIN:-}")"
+exec node "${repo_root}/apps/bridge-daemon/dist/runtime-socket-proxy.js" >> "${runtime_proxy_log_file}" 2>&1 < /dev/null
+EOF
+    chmod +x "${runtime_proxy_launch_script}"
+    if command -v setsid >/dev/null 2>&1; then
+      setsid "${runtime_proxy_launch_script}" >/dev/null 2>&1 &
+    else
+      nohup "${runtime_proxy_launch_script}" >/dev/null 2>&1 &
+      disown "$!" >/dev/null 2>&1 || true
+    fi
   )
 
   wait_for_socket "${runtime_proxy_socket}"
@@ -501,23 +561,35 @@ wait_for_health() {
   local port
   local url
   local attempt
+  local health_json
+  local backend
 
   port="$(read_bridge_port)"
   url="http://127.0.0.1:${port}/health"
+  backend="$(read_runtime_backend)"
 
   echo "[setup] Waiting for bridge health at ${url}..."
   for attempt in $(seq 1 60); do
     if command -v curl >/dev/null 2>&1; then
-      if curl -sf "${url}" >/dev/null 2>&1; then
+      health_json="$(curl -sf "${url}" 2>/dev/null || true)"
+      if bridge_health_ready "${health_json}" "${backend}"; then
         echo "[setup] Bridge runtime is healthy."
         return
       fi
     else
-      if compose exec -T bridge-runtime node -e "
-        fetch('${url}')
-          .then((response) => process.exit(response.ok ? 0 : 1))
-          .catch(() => process.exit(1));
-      " >/dev/null 2>&1; then
+      health_json="$(
+        compose exec -T bridge-runtime node -e "
+          fetch('http://127.0.0.1:${port}/health')
+            .then(async (response) => {
+              if (!response.ok) {
+                process.exit(1);
+              }
+              process.stdout.write(await response.text());
+            })
+            .catch(() => process.exit(1));
+        " 2>/dev/null || true
+      )"
+      if bridge_health_ready "${health_json}" "${backend}"; then
         echo "[setup] Bridge runtime is healthy."
         return
       fi
@@ -532,6 +604,21 @@ wait_for_health() {
     tail -n 40 "${runtime_proxy_log_file}" >&2 || true
   fi
   exit 1
+}
+
+bridge_health_ready() {
+  local health_json="$1"
+  local backend="$2"
+
+  if [[ -z "${health_json}" ]] || [[ "${health_json}" != *'"status":"ok"'* ]]; then
+    return 1
+  fi
+
+  if [[ "${backend}" == "mock" ]]; then
+    return 0
+  fi
+
+  [[ "${health_json}" == *'"connected":true'* && "${health_json}" == *'"initialized":true'* ]]
 }
 
 print_summary() {
