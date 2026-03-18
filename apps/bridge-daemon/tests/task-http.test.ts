@@ -2,11 +2,15 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { WebSocket } from "ws";
 
-import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bridge/shared";
+import { createBridgeTask } from "@codex-feishu-bridge/protocol";
+import { createConsoleLogger, prepareBridgeDirectories, writeJsonFile } from "@codex-feishu-bridge/shared";
 
 import { createCodexRuntime } from "../src/runtime";
 import { createBridgeHttpServer } from "../src/server/http";
@@ -216,6 +220,183 @@ describe("bridge daemon task http server", () => {
       if (ws && ws.readyState !== WebSocket.CLOSED) {
         ws.terminate();
       }
+      server.closeAllConnections?.();
+      server.closeIdleConnections?.();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      await service.dispose();
+      await runtime.dispose();
+    }
+  });
+
+  it("permanently deletes local imported tasks from bridge state and codex home", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace, {
+      BRIDGE_PORT: "0",
+      BRIDGE_WS_PATH: "/ws",
+      CODEX_RUNTIME_BACKEND: "mock",
+      MOCK_AUTO_COMPLETE_LOGIN: "true",
+    });
+    const logger = createConsoleLogger("bridge-daemon-delete-local-test");
+
+    await prepareBridgeDirectories(config);
+
+    const threadId = "thr-delete-local";
+    const rolloutRelativePath = "sessions/2026/03/19/rollout-delete-local.jsonl";
+    const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
+    await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
+    await writeFile(rolloutDiskPath, "{}\n", "utf8");
+
+    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    stateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        rollout_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        model_provider TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        title TEXT NOT NULL,
+        sandbox_policy TEXT NOT NULL,
+        approval_mode TEXT NOT NULL,
+        tokens_used INTEGER NOT NULL DEFAULT 0,
+        has_user_event INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
+        archived_at INTEGER,
+        git_sha TEXT,
+        git_branch TEXT,
+        git_origin_url TEXT,
+        cli_version TEXT NOT NULL DEFAULT '',
+        first_user_message TEXT NOT NULL DEFAULT '',
+        agent_nickname TEXT,
+        agent_role TEXT,
+        memory_mode TEXT NOT NULL DEFAULT 'enabled'
+      );
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        ts_nanos INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        target TEXT NOT NULL,
+        message TEXT,
+        module_path TEXT,
+        file TEXT,
+        line INTEGER,
+        thread_id TEXT,
+        process_uuid TEXT,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    stateDb
+      .prepare(`
+        INSERT INTO threads (
+          id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+          sandbox_policy, approval_mode, tokens_used, has_user_event, archived, cli_version,
+          first_user_message, memory_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, '', '', 'enabled')
+      `)
+      .run(
+        threadId,
+        `/codex-home/${rolloutRelativePath}`,
+        Date.now(),
+        Date.now(),
+        "test",
+        "openai",
+        config.workspaceRoot,
+        "Delete local task",
+        "workspace-write",
+        "on-request",
+      );
+    stateDb.prepare("INSERT INTO logs (ts, ts_nanos, level, target, thread_id) VALUES (?, ?, ?, ?, ?)").run(
+      Date.now(),
+      0,
+      "INFO",
+      "test",
+      threadId,
+    );
+    stateDb.close();
+
+    const logsDb = new DatabaseSync(path.join(config.codexHome, "logs_1.sqlite"));
+    logsDb.exec(`
+      CREATE TABLE logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        ts_nanos INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        target TEXT NOT NULL,
+        message TEXT,
+        module_path TEXT,
+        file TEXT,
+        line INTEGER,
+        thread_id TEXT,
+        process_uuid TEXT,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    logsDb.prepare("INSERT INTO logs (ts, ts_nanos, level, target, thread_id) VALUES (?, ?, ?, ?, ?)").run(
+      Date.now(),
+      0,
+      "INFO",
+      "test",
+      threadId,
+    );
+    logsDb.close();
+
+    const task = createBridgeTask({
+      threadId,
+      title: "Imported local task",
+      workspaceRoot: config.workspaceRoot,
+      mode: "manual-import",
+    });
+    await writeJsonFile(path.join(config.stateDir, "tasks.json"), {
+      seq: 0,
+      tasks: [task],
+    });
+
+    const runtime = createCodexRuntime(config, logger);
+    const service = new BridgeService({ config, logger, runtime });
+    const server = createBridgeHttpServer({ config, logger, runtime, service });
+
+    try {
+      await runtime.start();
+      await service.initialize();
+
+      await new Promise<void>((resolve) => {
+        server.listen(0, "127.0.0.1", resolve);
+      });
+
+      const address = server.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const deleted = await fetch(`${baseUrl}/tasks/${threadId}/delete-local`, {
+        method: "POST",
+      }).then((result) => result.json());
+
+      assert.equal(deleted.taskId, threadId);
+      assert.equal(service.getTask(threadId), null);
+
+      const stateDbAfter = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+      assert.equal(stateDbAfter.prepare("SELECT COUNT(*) AS count FROM threads WHERE id = ?").get(threadId).count, 0);
+      assert.equal(stateDbAfter.prepare("SELECT COUNT(*) AS count FROM logs WHERE thread_id = ?").get(threadId).count, 0);
+      stateDbAfter.close();
+
+      const logsDbAfter = new DatabaseSync(path.join(config.codexHome, "logs_1.sqlite"));
+      assert.equal(logsDbAfter.prepare("SELECT COUNT(*) AS count FROM logs WHERE thread_id = ?").get(threadId).count, 0);
+      logsDbAfter.close();
+
+      const remainingTasks = await fetch(`${baseUrl}/tasks`).then((result) => result.json());
+      assert.equal(remainingTasks.tasks.length, 0);
+
+      await assert.rejects(() => fetch(`${baseUrl}/tasks/${threadId}`).then((result) => {
+        if (!result.ok) {
+          throw new Error(`status=${result.status}`);
+        }
+      }));
+
+      await assert.rejects(() => writeFile(rolloutDiskPath, "still here\n", { flag: "r+" }));
+    } finally {
       server.closeAllConnections?.();
       server.closeIdleConnections?.();
       await new Promise<void>((resolve) => {

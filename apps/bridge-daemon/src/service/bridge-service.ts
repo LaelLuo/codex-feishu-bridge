@@ -1,7 +1,9 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   createBridgeEvent,
@@ -731,6 +733,21 @@ export class BridgeService {
     });
   }
 
+  async deleteLocalTask(taskId: string): Promise<void> {
+    const task = this.requireTask(taskId);
+    if (task.feishuBinding) {
+      throw new Error("Cannot permanently delete a Feishu-bound task from local storage.");
+    }
+
+    await this.deleteCodexThreadArtifacts(task.threadId);
+    this.forgetTaskRecord(task);
+    await this.persistState();
+    this.emitEvent(taskId, "task.updated", {
+      taskId,
+      localDeleted: true,
+    });
+  }
+
   async forgetImportedTasks(): Promise<{ removedTaskIds: string[] }> {
     const removableTasks = [...this.tasks.values()].filter((task) => task.mode === "manual-import" && !task.feishuBinding);
     const removedTaskIds = removableTasks.map((task) => task.taskId);
@@ -1404,6 +1421,101 @@ export class BridgeService {
       this.pendingTurnStarts.delete(task.activeTurnId);
       this.startedTurns.delete(task.activeTurnId);
     }
+  }
+
+  private async deleteCodexThreadArtifacts(threadId: string): Promise<void> {
+    const rolloutPath = this.deleteThreadFromStateDatabase(threadId);
+    this.deleteThreadFromLogsDatabase(threadId);
+    if (rolloutPath) {
+      await rm(rolloutPath, { force: true });
+    }
+  }
+
+  private deleteThreadFromStateDatabase(threadId: string): string | null {
+    const stateDbPath = path.join(this.options.config.codexHome, "state_5.sqlite");
+    if (!existsSync(stateDbPath)) {
+      return null;
+    }
+    const database = new DatabaseSync(stateDbPath);
+    let rolloutPath: string | null = null;
+
+    try {
+      database.exec("PRAGMA foreign_keys = ON");
+      rolloutPath = this.readThreadRolloutPath(database, threadId);
+
+      if (this.sqliteTableExists(database, "agent_job_items") && this.sqliteColumnExists(database, "agent_job_items", "assigned_thread_id")) {
+        database.prepare("UPDATE agent_job_items SET assigned_thread_id = NULL WHERE assigned_thread_id = ?").run(threadId);
+      }
+
+      for (const table of ["logs", "stage1_outputs", "thread_dynamic_tools"]) {
+        if (this.sqliteTableExists(database, table) && this.sqliteColumnExists(database, table, "thread_id")) {
+          database.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(threadId);
+        }
+      }
+
+      if (this.sqliteTableExists(database, "threads")) {
+        database.prepare("DELETE FROM threads WHERE id = ?").run(threadId);
+      }
+    } finally {
+      database.close();
+    }
+
+    return this.resolveCodexArtifactPath(rolloutPath);
+  }
+
+  private deleteThreadFromLogsDatabase(threadId: string): void {
+    const logsDbPath = path.join(this.options.config.codexHome, "logs_1.sqlite");
+    if (!existsSync(logsDbPath)) {
+      return;
+    }
+    const database = new DatabaseSync(logsDbPath);
+
+    try {
+      if (this.sqliteTableExists(database, "logs") && this.sqliteColumnExists(database, "logs", "thread_id")) {
+        database.prepare("DELETE FROM logs WHERE thread_id = ?").run(threadId);
+      }
+    } finally {
+      database.close();
+    }
+  }
+
+  private readThreadRolloutPath(database: DatabaseSync, threadId: string): string | null {
+    if (!this.sqliteTableExists(database, "threads")) {
+      return null;
+    }
+
+    const row = database.prepare("SELECT rollout_path FROM threads WHERE id = ?").get(threadId) as { rollout_path?: unknown } | undefined;
+    return typeof row?.rollout_path === "string" && row.rollout_path.trim() ? row.rollout_path : null;
+  }
+
+  private resolveCodexArtifactPath(targetPath: string | null): string | null {
+    if (!targetPath) {
+      return null;
+    }
+
+    const codexHomeRoot = path.resolve(this.options.config.codexHome);
+    if (targetPath.startsWith("/codex-home/")) {
+      return path.join(codexHomeRoot, targetPath.slice("/codex-home/".length));
+    }
+
+    if (path.isAbsolute(targetPath)) {
+      const resolved = path.resolve(targetPath);
+      return resolved === codexHomeRoot || resolved.startsWith(`${codexHomeRoot}${path.sep}`) ? resolved : null;
+    }
+
+    return path.join(codexHomeRoot, targetPath);
+  }
+
+  private sqliteTableExists(database: DatabaseSync, tableName: string): boolean {
+    const row = database
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+      .get(tableName) as Record<string, unknown> | undefined;
+    return Boolean(row);
+  }
+
+  private sqliteColumnExists(database: DatabaseSync, tableName: string, columnName: string): boolean {
+    const rows = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>;
+    return rows.some((row) => row.name === columnName);
   }
 
   private async persistState(): Promise<void> {

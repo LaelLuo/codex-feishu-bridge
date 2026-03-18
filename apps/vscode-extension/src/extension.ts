@@ -345,6 +345,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     forgetLocalTask: async (taskId) => {
       await services.client.forgetTask(taskId);
     },
+    deleteLocalTask: async (taskId) => {
+      await services.client.deleteLocalTask(taskId);
+    },
     openStatus: async () => {
       await services.store.refresh();
       const snapshot = services.store.getSnapshot();

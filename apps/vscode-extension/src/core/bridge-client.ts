@@ -208,6 +208,12 @@ export class BridgeClient {
     });
   }
 
+  async deleteLocalTask(taskId: string): Promise<void> {
+    await this.requestJson<{ taskId: string }>(`/tasks/${encodeURIComponent(taskId)}/delete-local`, {
+      method: "POST",
+    });
+  }
+
   async interruptTask(taskId: string): Promise<BridgeTask> {
     const result = await this.requestJson<{ task: BridgeTask }>(`/tasks/${encodeURIComponent(taskId)}/interrupt`, {
       method: "POST",

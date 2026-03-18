@@ -14,6 +14,7 @@ interface TaskMonitorViewProviderOptions {
   openDiff: (task: BridgeTask, diffPath?: string) => Promise<void>;
   setShowLocalImportedTasks: (enabled: boolean) => Promise<void> | void;
   forgetLocalTask: (taskId: string) => Promise<void>;
+  deleteLocalTask: (taskId: string) => Promise<void>;
 }
 
 function nonce(): string {
@@ -256,14 +257,14 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
             return;
           }
           const confirmed = await vscode.window.showWarningMessage(
-            "Delete this local task from the bridge monitor? The underlying host Codex thread in ~/.codex will be kept.",
+            "Delete this local task from the bridge monitor and permanently remove the underlying host Codex thread from this computer?",
             { modal: true },
             "Delete Local Task",
           );
           if (!confirmed) {
             return;
           }
-          await this.options.forgetLocalTask(task.taskId);
+          await this.options.deleteLocalTask(task.taskId);
           if (this.selectedTaskId === task.taskId) {
             await this.setSelectedTask(undefined);
           }

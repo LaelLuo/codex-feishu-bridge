@@ -258,6 +258,12 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
           return;
         }
 
+        if (request.method === "POST" && segments.length === 3 && segments[2] === "delete-local") {
+          await service.deleteLocalTask(taskId);
+          sendJson(response, 200, { taskId });
+          return;
+        }
+
         if (
           request.method === "POST" &&
           segments.length === 5 &&
