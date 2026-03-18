@@ -50,7 +50,11 @@ describe("task monitor view source", () => {
     assert.match(source, /id="composer-effort"/);
     assert.match(source, /id="composer-plan-mode"/);
     assert.match(source, /type: "update-execution-profile"/);
+    assert.match(source, /Enter<\/code> sends/);
+    assert.match(source, /Shift\+Enter/);
     assert.match(source, /Ctrl\/Cmd\+Enter/);
+    assert.match(source, /function sendCurrentComposerMessage\(\)/);
+    assert.match(source, /event\.isComposing \|\| event\.key !== "Enter" \|\| event\.shiftKey/);
   });
 
   it("adds explicit task handoff, multi-select, and action tooltip affordances to the monitor", () => {

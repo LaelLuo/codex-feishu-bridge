@@ -1362,6 +1362,28 @@ export class TaskMonitorPanel implements vscode.Disposable {
         return "Pick a task from the list above. Opened as an editor tab, this monitor keeps conversation, approvals, diffs, and the desktop composer on one page.";
       }
 
+      function sendCurrentComposerMessage() {
+        const taskId = currentTaskId();
+        const composer = document.getElementById("composer");
+        const content = composer instanceof HTMLTextAreaElement ? composer.value.trim() : "";
+        const attachmentPaths = taskId ? currentComposerAttachmentPaths() : [];
+        const executionProfile = currentComposerExecutionProfile();
+        if ((!content && attachmentPaths.length === 0) || !taskId) {
+          return;
+        }
+        vscode.postMessage({
+          type: "send-message",
+          taskId,
+          content,
+          attachmentPaths,
+          executionProfile: {
+            ...(executionProfile.model ? { model: executionProfile.model } : {}),
+            ...(executionProfile.effort ? { effort: executionProfile.effort } : {}),
+            ...(executionProfile.planMode ? { planMode: true } : {}),
+          },
+        });
+      }
+
       function selectedTaskPanel() {
         const task = state.selectedTask;
         if (!task) {
@@ -1420,7 +1442,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
             <div class="eyebrow" style="margin-top: 14px;">Desktop Composer</div>
             <div class="composer-shell">
               <div class="composer-toolbar">
-                <span class="muted">Task-scoped draft with model, reasoning, plan mode, and local photo/file attachments. <code>Ctrl/Cmd+Enter</code> sends.</span>
+                <span class="muted">Task-scoped draft with model, reasoning, plan mode, and local photo/file attachments. <code>Enter</code> sends, <code>Shift+Enter</code> inserts a newline, and <code>Ctrl/Cmd+Enter</code> also sends.</span>
                 <div class="composer-actions">
                   <button data-action="pick-composer-attachments" title="Attach local photos or files from this computer to the next desktop-side message.">Add Photos / Files</button>
                   <button data-action="clear-composer" title="Clear the current draft text and attached files for this task." \${currentComposerDraft() || currentComposerAttachmentPaths().length ? "" : "disabled"}>Clear Draft</button>
@@ -1504,13 +1526,11 @@ export class TaskMonitorPanel implements vscode.Disposable {
             resizeComposer();
           });
           composer.addEventListener("keydown", (event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              const sendButton = document.querySelector('[data-action="send-message"]');
-              if (sendButton instanceof HTMLElement) {
-                sendButton.click();
-              }
+            if (event.isComposing || event.key !== "Enter" || event.shiftKey) {
+              return;
             }
+            event.preventDefault();
+            sendCurrentComposerMessage();
           });
         }
 
@@ -1711,24 +1731,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
             render();
             return;
           case "send-message": {
-            const composer = document.getElementById("composer");
-            const content = composer instanceof HTMLTextAreaElement ? composer.value.trim() : "";
-            const attachmentPaths = taskId ? currentComposerAttachmentPaths() : [];
-            const executionProfile = currentComposerExecutionProfile();
-            if ((!content && attachmentPaths.length === 0) || !taskId) {
-              return;
-            }
-            vscode.postMessage({
-              type: "send-message",
-              taskId,
-              content,
-              attachmentPaths,
-              executionProfile: {
-                ...(executionProfile.model ? { model: executionProfile.model } : {}),
-                ...(executionProfile.effort ? { effort: executionProfile.effort } : {}),
-                ...(executionProfile.planMode ? { planMode: true } : {}),
-              },
-            });
+            sendCurrentComposerMessage();
             return;
           }
           case "interrupt":
