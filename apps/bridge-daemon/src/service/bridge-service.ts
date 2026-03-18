@@ -723,19 +723,31 @@ export class BridgeService {
 
   async forgetTask(taskId: string): Promise<void> {
     const task = this.requireTask(taskId);
-    this.tasks.delete(taskId);
-    this.pendingConversationSources.delete(taskId);
-    this.pendingTurnReplyPolicies.delete(taskId);
-    if (task.activeTurnId) {
-      this.turnReplyPolicies.delete(task.activeTurnId);
-      this.pendingTurnStarts.delete(task.activeTurnId);
-      this.startedTurns.delete(task.activeTurnId);
-    }
+    this.forgetTaskRecord(task);
     await this.persistState();
     this.emitEvent(taskId, "task.updated", {
       taskId,
       forgotten: true,
     });
+  }
+
+  async forgetImportedTasks(): Promise<{ removedTaskIds: string[] }> {
+    const removableTasks = [...this.tasks.values()].filter((task) => task.mode === "manual-import" && !task.feishuBinding);
+    const removedTaskIds = removableTasks.map((task) => task.taskId);
+    if (removedTaskIds.length === 0) {
+      return { removedTaskIds };
+    }
+
+    for (const task of removableTasks) {
+      this.forgetTaskRecord(task);
+    }
+
+    await this.persistState();
+    this.emitEvent(SYSTEM_TASK_ID, "task.updated", {
+      removedTaskIds,
+      removedReason: "clear-imported-local-tasks",
+    });
+    return { removedTaskIds };
   }
 
   async updateTaskSettings(taskId: string, request: TaskSettingsRequest): Promise<BridgeTask> {
@@ -1381,6 +1393,17 @@ export class BridgeService {
 
   private touchTask(task: BridgeTask, timestamp = new Date().toISOString()): void {
     task.updatedAt = timestamp;
+  }
+
+  private forgetTaskRecord(task: BridgeTask): void {
+    this.tasks.delete(task.taskId);
+    this.pendingConversationSources.delete(task.taskId);
+    this.pendingTurnReplyPolicies.delete(task.taskId);
+    if (task.activeTurnId) {
+      this.turnReplyPolicies.delete(task.activeTurnId);
+      this.pendingTurnStarts.delete(task.activeTurnId);
+      this.startedTurns.delete(task.activeTurnId);
+    }
   }
 
   private async persistState(): Promise<void> {

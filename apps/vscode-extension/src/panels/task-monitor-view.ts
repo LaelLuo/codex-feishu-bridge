@@ -126,6 +126,12 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
           }
           return;
         }
+        case "forget-imported-tasks": {
+          await this.options.client.forgetImportedTasks();
+          await this.options.store.refresh();
+          await this.postState();
+          return;
+        }
         case "toggle-local-imported-tasks": {
           this.showLocalImportedTasks = Boolean(payload.enabled);
           await this.options.context.workspaceState.update(
@@ -799,6 +805,7 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
             </div>
             <div class="actions" style="margin-top: 12px;">
               <button data-action="import-recent-threads">Import Recent Host Threads</button>
+              <button data-action="forget-imported-tasks">Clear Imported Local Tasks</button>
               <button data-action="refresh">Refresh</button>
             </div>
             <div class="sync-row" style="margin-top: 12px;">
@@ -853,6 +860,12 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
             return;
           case "refresh":
             vscode.postMessage({ type: "refresh" });
+            return;
+          case "forget-imported-tasks":
+            if (!window.confirm("Clear all imported local tasks from the bridge monitor? Host Codex threads in ~/.codex will be kept.")) {
+              return;
+            }
+            vscode.postMessage({ type: "forget-imported-tasks" });
             return;
           case "open-status":
             vscode.postMessage({ type: "open-status" });

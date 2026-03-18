@@ -174,6 +174,22 @@ describe("bridge daemon task http server", () => {
       assert.equal(forgotten.taskId, secondTaskId);
       assert.equal(service.getTask(secondTaskId), null);
 
+      const imported = await fetch(`${baseUrl}/tasks/import/recent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          limit: 5,
+        }),
+      }).then((result) => result.json());
+      assert.ok(Array.isArray(imported.tasks));
+
+      const clearedImported = await fetch(`${baseUrl}/tasks/forget/imported`, {
+        method: "POST",
+      }).then((result) => result.json());
+      assert.ok(Array.isArray(clearedImported.removedTaskIds));
+
       await waitFor(() => {
         const secondTaskSnapshot = service.getTask(firstTaskId);
         return Boolean(

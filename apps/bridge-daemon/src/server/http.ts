@@ -160,6 +160,12 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
         return;
       }
 
+      if (request.method === "POST" && url.pathname === "/tasks/forget/imported") {
+        const result = await service.forgetImportedTasks();
+        sendJson(response, 200, result);
+        return;
+      }
+
       if (request.method === "POST" && url.pathname === "/feishu/webhook") {
         if (!feishu?.webhookEnabled) {
           sendJson(response, 503, { error: "feishu webhook is not configured" });

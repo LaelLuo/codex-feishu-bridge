@@ -172,6 +172,13 @@ export class BridgeClient {
     return result.tasks;
   }
 
+  async forgetImportedTasks(): Promise<string[]> {
+    const result = await this.requestJson<{ removedTaskIds: string[] }>("/tasks/forget/imported", {
+      method: "POST",
+    });
+    return result.removedTaskIds;
+  }
+
   async sendMessage(taskId: string, payload: TaskMessagePayload): Promise<BridgeTask> {
     const result = await this.requestJson<{ task: BridgeTask }>(`/tasks/${encodeURIComponent(taskId)}/messages`, {
       method: "POST",
