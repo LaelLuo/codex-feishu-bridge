@@ -19,6 +19,7 @@ import {
   createCardTestCard,
   createDraftCard,
   createTaskControlCard,
+  createTaskStatusSnapshotCard,
   type FeishuCardActionValue,
   type FeishuInteractiveCard,
   type FeishuModelOption,
@@ -1644,8 +1645,9 @@ export class FeishuBridge {
     replyTargetId?: string;
     note?: string;
     forceReply?: boolean;
+    persistAsCurrentCard?: boolean;
   }): Promise<FeishuInteractiveCard | null> {
-    const { task, binding, replyTargetId, note, forceReply = false } = params;
+    const { task, binding, replyTargetId, note, forceReply = false, persistAsCurrentCard = true } = params;
     const existing = this.getThreadTaskCard(binding);
     const revision = (existing?.revision ?? 0) + 1;
     const card = await this.buildTaskControlCard(task, binding, revision, note ?? existing?.note);
@@ -1662,16 +1664,37 @@ export class FeishuBridge {
       return null;
     }
 
-    await this.saveThreadTaskCard({
-      chatId: binding.chatId,
-      threadKey: binding.threadKey,
-      rootMessageId: binding.rootMessageId,
-      taskId: task.taskId,
-      messageId,
-      revision,
-      note: note ?? existing?.note,
-    });
+    if (persistAsCurrentCard) {
+      await this.saveThreadTaskCard({
+        chatId: binding.chatId,
+        threadKey: binding.threadKey,
+        rootMessageId: binding.rootMessageId,
+        taskId: task.taskId,
+        messageId,
+        revision,
+        note: note ?? existing?.note,
+      });
+    }
     return card;
+  }
+
+  private async replyTaskStatusSnapshotCard(params: {
+    task: BridgeTask;
+    binding: FeishuThreadBinding;
+    note: string;
+    replyTargetId?: string;
+  }): Promise<void> {
+    const { task, binding, note, replyTargetId } = params;
+    const card = createTaskStatusSnapshotCard({
+      task,
+      note,
+    });
+    const targetMessageId =
+      replyTargetId ??
+      binding.rootMessageId ??
+      this.getThreadTaskCard(binding)?.messageId ??
+      binding.threadKey;
+    await this.sendCardReply(targetMessageId, card);
   }
 
   private async buildTaskControlCard(
@@ -2338,8 +2361,13 @@ export class FeishuBridge {
         break;
       }
       case "task.status":
-        note = formatTaskSummary(task);
-        break;
+        await this.replyTaskStatusSnapshotCard({
+          task,
+          binding,
+          note: formatTaskSummary(task),
+          replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
+        });
+        return;
       case "task.interrupt":
         await this.options.service.interruptTask(task.taskId);
         note = `Interrupted task ${task.taskId}.`;
@@ -2435,12 +2463,13 @@ export class FeishuBridge {
     }
 
     if (event?.open_message_id ?? currentCard?.messageId) {
+      const persistentMessageId = currentCard?.messageId ?? event?.open_message_id;
       await this.saveThreadTaskCard({
         chatId: binding.chatId,
         threadKey: binding.threadKey,
         rootMessageId: binding.rootMessageId,
         taskId: task.taskId,
-        messageId: event?.open_message_id ?? currentCard?.messageId ?? "",
+        messageId: persistentMessageId ?? "",
         revision: currentCard?.revision ?? 0,
         note: currentCard?.note,
       });

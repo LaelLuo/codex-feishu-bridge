@@ -3,7 +3,12 @@ import { describe, it } from "node:test";
 
 import { createBridgeTask, type FeishuThreadBinding } from "@codex-feishu-bridge/protocol";
 
-import { createArchivedThreadCard, createDraftCard, createTaskControlCard } from "../src/feishu/cards";
+import {
+  createArchivedThreadCard,
+  createDraftCard,
+  createTaskControlCard,
+  createTaskStatusSnapshotCard,
+} from "../src/feishu/cards";
 
 const BINDING: FeishuThreadBinding = {
   chatId: "oc_chat_id",
@@ -187,6 +192,40 @@ describe("feishu card builders", () => {
     assert.match(json, /already created on the workstation/);
     assert.match(json, /send the first plain-text message in this thread to start the first turn/i);
     assert.match(json, /Create on Host only appears on the draft card before the task exists/);
+  });
+
+  it("renders a read-only status snapshot card for mobile status checks", () => {
+    const task = createBridgeTask({
+      threadId: "thr-status-task",
+      title: "Status snapshot task",
+      workspaceRoot: "/tmp/workspace",
+      mode: "bridge-managed",
+    });
+    task.status = "running";
+    task.feishuRunningMessageMode = "queue";
+    task.queuedMessageCount = 1;
+    task.conversation = [
+      {
+        messageId: "msg-status-1",
+        author: "agent",
+        surface: "runtime",
+        content: "Working",
+        createdAt: "2026-03-19T00:00:00.000Z",
+      },
+    ];
+
+    const statusCard = createTaskStatusSnapshotCard({
+      task,
+      note: "taskId: task-1\nstatus: running",
+    });
+
+    const json = JSON.stringify(statusCard);
+    assert.match(json, /Task Status Snapshot: Status snapshot task/);
+    assert.match(json, /Snapshot Details/);
+    assert.match(json, /Use the main task card for controls/);
+    assert.doesNotMatch(json, /Latest Update/);
+    assert.doesNotMatch(json, /View Status/);
+    assert.doesNotMatch(json, /Stop Turn/);
   });
 
   it("renders an archived-topic card that tells mobile users the thread is closed", () => {

@@ -59,6 +59,11 @@ export interface FeishuTaskControlCardData {
   modelOptions: FeishuModelOption[];
 }
 
+export interface FeishuTaskStatusSnapshotCardData {
+  task: BridgeTask;
+  note?: string;
+}
+
 export interface FeishuArchivedThreadCardData {
   binding: FeishuThreadBinding;
   taskId?: string;
@@ -614,6 +619,46 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           }),
         }),
       ]),
+    ],
+  };
+}
+
+export function createTaskStatusSnapshotCard(data: FeishuTaskStatusSnapshotCardData): FeishuInteractiveCard {
+  const note = truncateNote(data.note);
+  const { task } = data;
+
+  return {
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+    },
+    header: {
+      title: plainText(`Task Status Snapshot: ${task.title}`),
+      template: task.status === "failed" ? "red" : task.status === "awaiting-approval" ? "yellow" : "green",
+    },
+    elements: [
+      markdown(
+        [
+          "**Current Task**",
+          `taskId: ${task.taskId}`,
+          `status: ${task.status}`,
+          ...formatExecutionProfile(task.executionProfile),
+          `feishu while running: ${formatFeishuRunningMessageMode(task.feishuRunningMessageMode)}`,
+          `queued next-turn messages: ${task.queuedMessageCount}`,
+          `attachments: ${task.assets.length}`,
+          `messages: ${task.conversation.length}`,
+          `pending approvals: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
+        ].join("\n"),
+      ),
+      ...(note ? [divider(), markdown(`**Snapshot Details**\n${note}`)] : []),
+      divider(),
+      markdown(
+        [
+          "**Use the main task card for controls**",
+          "- retry, interrupt, approve, unbind, and archive still live on the bound task card",
+          "- this snapshot card is a read-only reply so status checks do not overwrite the main card",
+        ].join("\n"),
+      ),
     ],
   };
 }

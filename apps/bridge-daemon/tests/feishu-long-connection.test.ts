@@ -599,6 +599,81 @@ describe("feishu long connection ingress", () => {
     }
   });
 
+  it("replies with a new status snapshot card instead of patching the bound task card", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Status card task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardTitle(request, `Task: ${task.title}`),
+          ),
+        "initial bound task card",
+      );
+
+      const taskCards = (
+        harness.feishu as unknown as { threadTaskCards: Map<string, { messageId: string }> }
+      ).threadTaskCards;
+      const currentCard = taskCards.get(`${task.feishuBinding?.chatId}:${task.feishuBinding?.threadKey}`);
+      assert.ok(currentCard?.messageId);
+
+      const previousSnapshotReplyCount = harness.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.url.includes("/open-apis/im/v1/messages/") &&
+          requestContainsCardTitle(request, `Task Status Snapshot: ${task.title}`),
+      ).length;
+      const previousPatchCount = harness.requests.filter(
+        (request) => request.method === "PATCH" && request.url.endsWith(`/open-apis/im/v1/messages/${currentCard?.messageId}`),
+      ).length;
+
+      const statusResult = await harness.onCardAction({
+        open_message_id: currentCard?.messageId,
+        open_id: "ou_status_card",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.status",
+            chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+            threadKey: task.feishuBinding?.threadKey ?? "omt_status_task",
+            rootMessageId: task.feishuBinding?.rootMessageId,
+            taskId: task.taskId,
+            revision: 1,
+          },
+        },
+      });
+
+      assert.equal(statusResult, undefined);
+      await waitFor(
+        () =>
+          harness.requests.filter(
+            (request) =>
+              request.method === "POST" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardTitle(request, `Task Status Snapshot: ${task.title}`),
+          ).length > previousSnapshotReplyCount,
+        "status snapshot card reply",
+      );
+      assert.equal(
+        harness.requests.filter(
+          (request) => request.method === "PATCH" && request.url.endsWith(`/open-apis/im/v1/messages/${currentCard?.messageId}`),
+        ).length,
+        previousPatchCount,
+      );
+      assert.equal(taskCards.get(`${task.feishuBinding?.chatId}:${task.feishuBinding?.threadKey}`)?.messageId, currentCard?.messageId);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("supports slash bind, status, unbind, and approve commands without implicit root-thread creation", async () => {
     const harness = await createHarness();
     const originalRespondToRequest = harness.runtime.respondToRequest.bind(harness.runtime);
