@@ -82,6 +82,10 @@ describe("task monitor view source", () => {
     assert.match(source, /function finishPendingAction\(requestId\)/);
     assert.match(source, /function postPendingButtonMessage\(button, message\)/);
     assert.match(source, /type: "action-finished"/);
+    assert.match(source, /case "open-status":\s*postPendingButtonMessage\(target, \{ type: "open-status" \}\);\s*return;/s);
+    assert.match(source, /case "pick-composer-attachments":[\s\S]*postPendingButtonMessage\(target, \{ type: "pick-composer-attachments", taskId \}\);\s*return;/s);
+    assert.match(source, /case "open-diff":[\s\S]*postPendingButtonMessage\(target, \{\s*type: "open-diff"/s);
+    assert.match(source, /type: "composer-attachments-selected"[\s\S]*pendingRequestId: payload\.pendingRequestId/s);
   });
 
   it("renders task origin badges alongside feishu bindings in the monitor cards", () => {

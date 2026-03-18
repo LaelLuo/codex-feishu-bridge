@@ -213,6 +213,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
             type: "composer-attachments-selected",
             taskId: task.taskId,
             attachmentPaths: files.map((file) => file.fsPath),
+            pendingRequestId: payload.pendingRequestId,
           });
           return;
         }
@@ -2067,13 +2068,13 @@ export class TaskMonitorPanel implements vscode.Disposable {
             postPendingButtonMessage(target, { type: "forget-imported-tasks" });
             return;
           case "open-status":
-            vscode.postMessage({ type: "open-status" });
+            postPendingButtonMessage(target, { type: "open-status" });
             return;
           case "pick-composer-attachments":
             if (!taskId) {
               return;
             }
-            vscode.postMessage({ type: "pick-composer-attachments", taskId });
+            postPendingButtonMessage(target, { type: "pick-composer-attachments", taskId });
             return;
           case "clear-composer":
             if (!taskId) {
@@ -2138,7 +2139,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
             if (!taskId || !target.dataset.diffPath) {
               return;
             }
-            vscode.postMessage({
+            postPendingButtonMessage(target, {
               type: "open-diff",
               taskId,
               diffPath: target.dataset.diffPath,

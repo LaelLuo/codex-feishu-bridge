@@ -34,8 +34,44 @@ describe("monitor model", () => {
 
     assert.equal(pickMonitorTask([first, second])?.taskId, second.taskId);
     assert.equal(pickMonitorTask([first, second], first.taskId, true)?.taskId, first.taskId);
-    assert.equal(pickMonitorTask([first, second], first.taskId)?.taskId, second.taskId);
-    assert.equal(pickMonitorTask([first, second], first.taskId, false, false), null);
+    assert.equal(pickMonitorTask([first, second], first.taskId)?.taskId, first.taskId);
+    assert.equal(pickMonitorTask([first, second], first.taskId, false, false)?.taskId, first.taskId);
+  });
+
+  it("keeps an explicitly selected task visible after it becomes local-only by unbinding feishu", () => {
+    const task = createBridgeTask({
+      threadId: "thr-unbound-after-feishu",
+      title: "Was Feishu-bound",
+      workspaceRoot: "/tmp/workspace",
+      mode: "bridge-managed",
+      createdAt: "2026-03-18T00:00:00.000Z",
+    });
+    task.updatedAt = "2026-03-18T00:00:03.000Z";
+    task.conversation = [
+      {
+        messageId: "msg-1",
+        author: "agent",
+        surface: "runtime",
+        content: "Runtime reply after unbind",
+        createdAt: "2026-03-18T00:00:02.000Z",
+      },
+    ];
+
+    const snapshot = {
+      ...createEmptySnapshot(),
+      connection: "connected" as const,
+      tasks: [task],
+      lastUpdatedAt: "2026-03-18T00:00:03.000Z",
+    };
+
+    const state = buildMonitorState(snapshot, task.taskId, {
+      showLocalImportedTasks: false,
+      autoSelectFirstTask: false,
+    });
+    assert.equal(state.taskCount, 1);
+    assert.equal(state.hiddenTaskCount, 0);
+    assert.equal(state.selectedTask?.taskId, task.taskId);
+    assert.equal(state.selectedTask?.conversation[0]?.content, "Runtime reply after unbind");
   });
 
   it("does not auto-switch to another task after an explicit selection disappears", () => {

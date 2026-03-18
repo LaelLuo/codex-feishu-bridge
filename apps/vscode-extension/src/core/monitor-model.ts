@@ -143,8 +143,16 @@ function taskExecutionSummary(task: Pick<BridgeTask, "executionProfile">): strin
   ].join(" · ");
 }
 
-function filterMonitorTasks(tasks: BridgeTask[], showLocalImportedTasks: boolean): BridgeTask[] {
-  return showLocalImportedTasks ? tasks : tasks.filter((task) => Boolean(task.feishuBinding));
+function filterMonitorTasks(
+  tasks: BridgeTask[],
+  showLocalImportedTasks: boolean,
+  selectedTaskId?: string,
+): BridgeTask[] {
+  if (showLocalImportedTasks) {
+    return tasks;
+  }
+
+  return tasks.filter((task) => Boolean(task.feishuBinding) || task.taskId === selectedTaskId);
 }
 
 export function pickMonitorTask(
@@ -153,13 +161,13 @@ export function pickMonitorTask(
   showLocalImportedTasks = false,
   autoSelectFirstTask = true,
 ): BridgeTask | null {
-  const visibleTasks = filterMonitorTasks(tasks, showLocalImportedTasks);
   if (selectedTaskId) {
-    const selected = visibleTasks.find((task) => task.taskId === selectedTaskId);
+    const selected = tasks.find((task) => task.taskId === selectedTaskId);
     if (selected) {
       return selected;
     }
 
+    const visibleTasks = filterMonitorTasks(tasks, showLocalImportedTasks, selectedTaskId);
     return autoSelectFirstTask ? (visibleTasks.find((task) => Boolean(task.feishuBinding)) ?? visibleTasks[0] ?? null) : null;
   }
 
@@ -167,6 +175,7 @@ export function pickMonitorTask(
     return null;
   }
 
+  const visibleTasks = filterMonitorTasks(tasks, showLocalImportedTasks, selectedTaskId);
   return visibleTasks.find((task) => Boolean(task.feishuBinding)) ?? visibleTasks[0] ?? null;
 }
 
@@ -177,7 +186,7 @@ export function buildMonitorState(
 ): MonitorViewState {
   const showLocalImportedTasks = options?.showLocalImportedTasks ?? false;
   const autoSelectFirstTask = options?.autoSelectFirstTask ?? true;
-  const visibleTasks = filterMonitorTasks(snapshot.tasks, showLocalImportedTasks);
+  const visibleTasks = filterMonitorTasks(snapshot.tasks, showLocalImportedTasks, selectedTaskId);
   const selectedTask = pickMonitorTask(snapshot.tasks, selectedTaskId, showLocalImportedTasks, autoSelectFirstTask);
   return {
     connection: snapshot.connection,
