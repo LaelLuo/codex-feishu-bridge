@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createBridgeTask, type FeishuThreadBinding } from "@codex-feishu-bridge/protocol";
 
-import { createDraftCard, createTaskControlCard } from "../src/feishu/cards";
+import { createArchivedThreadCard, createDraftCard, createTaskControlCard } from "../src/feishu/cards";
 
 const BINDING: FeishuThreadBinding = {
   chatId: "oc_chat_id",
@@ -142,10 +142,27 @@ describe("feishu card builders", () => {
     assert.match(taskJson, /View Status/);
     assert.match(taskJson, /Stop Turn/);
     assert.match(taskJson, /Retry Last Turn/);
+    assert.match(taskJson, /Archive Task/);
     assert.match(taskJson, /Unbind Thread/);
     assert.match(taskJson, /Pending Approval/);
     assert.match(taskJson, /Cancel Approval/);
     assert.match(taskJson, /Bridge Health/);
     assert.match(taskJson, /Rate Limits/);
+  });
+
+  it("renders an archived-topic card that tells mobile users the thread is closed", () => {
+    const card = createArchivedThreadCard({
+      binding: BINDING,
+      taskId: "task-archived",
+      taskTitle: "Archived task",
+      archivedAt: "2026-03-19T00:00:00.000Z",
+      note: "Archived this topic from the card.",
+    });
+
+    const json = JSON.stringify(card);
+    assert.match(json, /Archived Codex Topic/);
+    assert.match(json, /This Feishu topic is archived/);
+    assert.match(json, /taskId: task-archived/);
+    assert.match(json, /start a new Feishu topic/i);
   });
 });

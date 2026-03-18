@@ -671,6 +671,89 @@ describe("feishu long connection ingress", () => {
     }
   });
 
+  it("archives a bound topic from the task card and blocks future messages in the same thread", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Archive me",
+        prompt: "Start archive flow",
+      });
+
+      await harness.onMessage(
+        {
+          message_id: "om_archive_bind",
+          thread_id: "omt_archive",
+          root_id: "om_root_archive",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: `/bind ${task.taskId}` }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_archive",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.service.getTask(task.taskId)?.feishuBinding?.threadKey === "omt_archive",
+        "archive bind",
+      );
+
+      const archivedCard = await harness.onCardAction({
+        open_message_id: "om_card_archive",
+        open_id: "ou_archive",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.archive",
+            chatId: "oc_chat_id",
+            threadKey: "omt_archive",
+            rootMessageId: "om_root_archive",
+            taskId: task.taskId,
+            revision: 2,
+          },
+        },
+      });
+
+      assert.ok(archivedCard);
+      assert.match(JSON.stringify(archivedCard), /Archived Codex Topic/);
+      await waitFor(() => !harness.service.getTask(task.taskId)?.feishuBinding, "task unbound after archive");
+
+      const archivedThreads = (
+        harness.feishu as unknown as { archivedThreads: Map<string, { taskId?: string }> }
+      ).archivedThreads;
+      assert.equal(archivedThreads.get("oc_chat_id:omt_archive")?.taskId, task.taskId);
+
+      const previousConversationLength = harness.service.getTask(task.taskId)?.conversation.length ?? 0;
+      await harness.onMessage(
+        {
+          message_id: "om_archive_after",
+          thread_id: "omt_archive",
+          root_id: "om_root_archive",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "please keep working" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_archive",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => parseMessageText(request).includes("This Feishu topic is archived")),
+        "archived-thread reply",
+      );
+      await delay(50);
+      assert.equal(harness.service.getTask(task.taskId)?.conversation.length ?? 0, previousConversationLength);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("supports global slash commands without treating them as normal prompts", async () => {
     const harness = await createHarness();
 

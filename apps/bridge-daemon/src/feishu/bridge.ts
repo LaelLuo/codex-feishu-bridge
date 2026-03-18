@@ -15,6 +15,7 @@ import { readJsonFile, writeJsonFile, type BridgeConfig, type Logger } from "@co
 
 import { BridgeService, type BridgeServiceEvent } from "../service/bridge-service";
 import {
+  createArchivedThreadCard,
   createCardTestCard,
   createDraftCard,
   createTaskControlCard,
@@ -55,6 +56,7 @@ interface PersistedFeishuState {
   processedEventIds: string[];
   drafts: FeishuThreadDraft[];
   taskCards: FeishuTaskCardState[];
+  archivedThreads: FeishuArchivedThreadState[];
 }
 
 interface FeishuThreadDraft {
@@ -88,6 +90,15 @@ interface FeishuTaskCardState {
   messageId: string;
   revision: number;
   note?: string;
+}
+
+interface FeishuArchivedThreadState {
+  chatId: string;
+  threadKey: string;
+  rootMessageId?: string;
+  taskId?: string;
+  taskTitle?: string;
+  archivedAt: string;
 }
 
 export interface FeishuIncomingMessage {
@@ -527,6 +538,13 @@ function formatTaskFailure(task: BridgeTask, payload: unknown): string {
   ].join("\n");
 }
 
+function formatArchivedThreadNotice(taskId?: string): string {
+  return [
+    `This Feishu topic is archived${taskId ? ` from task ${taskId}` : ""}.`,
+    "Start a new topic with the bot if you want to launch or bind more work.",
+  ].join("\n");
+}
+
 function truncateReplyText(text: string): string {
   const normalized = text.trim();
   if (normalized.length <= FEISHU_REPLY_MAX_CHARS) {
@@ -591,6 +609,7 @@ export class FeishuBridge {
   private readonly processedEventIds = new Set<string>();
   private readonly threadDrafts = new Map<string, FeishuThreadDraft>();
   private readonly threadTaskCards = new Map<string, FeishuTaskCardState>();
+  private readonly archivedThreads = new Map<string, FeishuArchivedThreadState>();
   private serviceUnsubscribe: (() => void) | null = null;
   private tenantAccessToken?: string;
   private tenantAccessTokenExpiresAt = 0;
@@ -640,6 +659,7 @@ export class FeishuBridge {
       processedEventIds: [],
       drafts: [],
       taskCards: [],
+      archivedThreads: [],
     });
     for (const eventId of persisted.processedEventIds.slice(-200)) {
       this.processedEventIds.add(eventId);
@@ -653,6 +673,9 @@ export class FeishuBridge {
     }
     for (const card of persisted.taskCards ?? []) {
       this.threadTaskCards.set(draftStorageKey(card), card);
+    }
+    for (const archivedThread of persisted.archivedThreads ?? []) {
+      this.archivedThreads.set(draftStorageKey(archivedThread), archivedThread);
     }
 
     if (!this.enabled || this.subscribed) {
@@ -675,6 +698,7 @@ export class FeishuBridge {
     this.subscribed = false;
     this.threadDrafts.clear();
     this.threadTaskCards.clear();
+    this.archivedThreads.clear();
     void this.longConnectionHandle?.stop();
     this.longConnectionHandle = null;
   }
@@ -776,6 +800,7 @@ export class FeishuBridge {
       rootMessageId,
     };
 
+    this.deleteArchivedThread(binding);
     const boundTask = await this.options.service.bindFeishuThread(task.taskId, binding);
     await this.renderTaskControlCard({
       task: this.options.service.getTask(task.taskId) ?? boundTask,
@@ -991,12 +1016,14 @@ export class FeishuBridge {
     const replyTargetId = message.message_id ?? message.root_id ?? message.parent_id ?? message.thread_id ?? lookupId;
     const currentBinding = buildBindingFromMessage(message);
     const task = this.options.service.findTaskByFeishuBinding(message.chat_id, lookupIds);
+    const archivedThread = currentBinding ? this.getArchivedThread(currentBinding) : null;
 
     if (message.message_type === "image" || message.message_type === "file") {
       await this.handleIncomingAttachmentMessage({
         message,
         task,
         currentBinding,
+        archivedThread,
         replyTargetId,
         actorId,
       });
@@ -1005,6 +1032,11 @@ export class FeishuBridge {
 
     if (message.message_type !== "text") {
       this.options.logger.info("ignoring unsupported feishu message type", summary);
+      return;
+    }
+
+    if (!task && archivedThread) {
+      await this.replyToMessage(replyTargetId, formatArchivedThreadNotice(archivedThread.taskId));
       return;
     }
 
@@ -1087,10 +1119,16 @@ export class FeishuBridge {
     message: FeishuIncomingMessage;
     task: BridgeTask | null;
     currentBinding: FeishuThreadBinding | null;
+    archivedThread: FeishuArchivedThreadState | null;
     replyTargetId: string;
     actorId: string;
   }): Promise<void> {
-    const { message, task, currentBinding, replyTargetId, actorId } = params;
+    const { message, task, currentBinding, archivedThread, replyTargetId, actorId } = params;
+    if (!task && archivedThread) {
+      await this.replyToMessage(replyTargetId, formatArchivedThreadNotice(archivedThread.taskId));
+      return;
+    }
+
     const attachment = await this.downloadIncomingAttachment(message);
     if (!attachment) {
       await this.replyToMessage(replyTargetId, "This attachment type is not supported yet.");
@@ -1353,6 +1391,7 @@ export class FeishuBridge {
         await this.options.service.unbindFeishuThread(task.taskId);
       }
 
+      this.deleteArchivedThread(currentBinding);
       this.deleteThreadDraft(currentBinding);
       const reboundTask = await this.options.service.bindFeishuThread(targetTaskId, currentBinding);
       await this.renderTaskControlCard({
@@ -1473,6 +1512,32 @@ export class FeishuBridge {
     }
 
     this.threadTaskCards.delete(draftStorageKey(binding));
+    void this.persistState();
+  }
+
+  private getArchivedThread(binding: Pick<FeishuThreadBinding, "chatId" | "threadKey">): FeishuArchivedThreadState | null {
+    return this.archivedThreads.get(draftStorageKey(binding)) ?? null;
+  }
+
+  private isThreadArchived(binding: Pick<FeishuThreadBinding, "chatId" | "threadKey"> | null): boolean {
+    if (!binding) {
+      return false;
+    }
+
+    return this.archivedThreads.has(draftStorageKey(binding));
+  }
+
+  private async saveArchivedThread(archivedThread: FeishuArchivedThreadState): Promise<void> {
+    this.archivedThreads.set(draftStorageKey(archivedThread), archivedThread);
+    await this.persistState();
+  }
+
+  private deleteArchivedThread(binding: Pick<FeishuThreadBinding, "chatId" | "threadKey"> | null): void {
+    if (!binding) {
+      return;
+    }
+
+    this.archivedThreads.delete(draftStorageKey(binding));
     void this.persistState();
   }
 
@@ -1606,6 +1671,32 @@ export class FeishuBridge {
       revision,
       modelOptions: this.toModelOptions(await this.options.service.listModels()),
     });
+  }
+
+  private async renderArchivedThreadCard(params: {
+    binding: FeishuThreadBinding;
+    taskId?: string;
+    taskTitle?: string;
+    archivedAt?: string;
+    messageId?: string;
+    note?: string;
+  }): Promise<FeishuInteractiveCard> {
+    const { binding, taskId, taskTitle, archivedAt, messageId, note } = params;
+    const card = createArchivedThreadCard({
+      binding,
+      taskId,
+      taskTitle,
+      archivedAt,
+      note,
+    });
+
+    const targetMessageId = messageId ?? this.getThreadTaskCard(binding)?.messageId ?? this.getThreadDraft(binding)?.cardMessageId;
+    if (!targetMessageId) {
+      return card;
+    }
+
+    await this.patchCardMessage(targetMessageId, card);
+    return card;
   }
 
   private async markThreadUnbound(binding: FeishuThreadBinding, note: string): Promise<void> {
@@ -2036,6 +2127,7 @@ export class FeishuBridge {
             executionProfile,
             replyToFeishu: true,
           });
+          this.deleteArchivedThread(binding);
           await this.options.service.bindFeishuThread(task.taskId, binding);
           const attachmentAssetIds = await this.uploadDraftAttachmentsToTask(task.taskId, draft);
           this.deleteThreadDraft(binding);
@@ -2098,8 +2190,25 @@ export class FeishuBridge {
       });
     }
 
-    const task = (value.taskId && this.options.service.getTask(value.taskId)) ?? this.options.service.findTaskByFeishuBinding(binding.chatId, [binding.threadKey, binding.rootMessageId].filter(Boolean) as string[]);
+    const task =
+      (value.taskId && this.options.service.getTask(value.taskId)) ??
+      this.options.service.findTaskByFeishuBinding(
+        binding.chatId,
+        [binding.threadKey, binding.rootMessageId].filter(Boolean) as string[],
+      );
     if (!task) {
+      const archivedThread = this.getArchivedThread(binding);
+      if (archivedThread) {
+        return this.renderArchivedThreadCard({
+          binding,
+          taskId: archivedThread.taskId,
+          taskTitle: archivedThread.taskTitle,
+          archivedAt: archivedThread.archivedAt,
+          messageId: event?.open_message_id,
+          note: formatArchivedThreadNotice(archivedThread.taskId),
+        });
+      }
+
       const existingDraft = this.getThreadDraft(binding);
       const fallbackDraft: FeishuThreadDraft = {
         ...createDefaultDraft(binding),
@@ -2212,6 +2321,28 @@ export class FeishuBridge {
         });
         note = `Queued retry for task ${task.taskId}.`;
         break;
+      case "task.archive": {
+        const archivedAt = new Date().toISOString();
+        await this.options.service.unbindFeishuThread(task.taskId);
+        this.deleteThreadDraft(binding);
+        await this.saveArchivedThread({
+          chatId: binding.chatId,
+          threadKey: binding.threadKey,
+          rootMessageId: binding.rootMessageId,
+          taskId: task.taskId,
+          taskTitle: task.title,
+          archivedAt,
+        });
+        this.deleteThreadTaskCard(binding);
+        return this.renderArchivedThreadCard({
+          binding,
+          taskId: task.taskId,
+          taskTitle: task.title,
+          archivedAt,
+          messageId: event?.open_message_id ?? currentCard?.messageId,
+          note: "Archived this topic. Continue the host task from VSCode or CLI, or start a new Feishu topic for more work.",
+        });
+      }
       case "task.approve":
       case "task.decline":
       case "task.cancel-approval": {
@@ -2492,6 +2623,7 @@ export class FeishuBridge {
       processedEventIds: [...this.processedEventIds].slice(-200),
       drafts: [...this.threadDrafts.values()],
       taskCards: [...this.threadTaskCards.values()],
+      archivedThreads: [...this.archivedThreads.values()],
     } satisfies PersistedFeishuState);
   }
 }

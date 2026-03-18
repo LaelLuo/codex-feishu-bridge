@@ -58,6 +58,14 @@ export interface FeishuTaskControlCardData {
   modelOptions: FeishuModelOption[];
 }
 
+export interface FeishuArchivedThreadCardData {
+  binding: FeishuThreadBinding;
+  taskId?: string;
+  taskTitle?: string;
+  archivedAt?: string;
+  note?: string;
+}
+
 export type FeishuCardActionKind =
   | "test.ping"
   | "draft.select.model"
@@ -77,6 +85,7 @@ export type FeishuCardActionKind =
   | "task.approve"
   | "task.decline"
   | "task.cancel-approval"
+  | "task.archive"
   | "task.unbind"
   | "task.inspect"
   | "task.inspect.global";
@@ -519,6 +528,14 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           }),
         }),
         button({
+          text: "Archive Task",
+          type: "danger",
+          value: baseActionValue("task.archive", binding, {
+            taskId: task.taskId,
+            revision,
+          }),
+        }),
+        button({
           text: "Unbind Thread",
           value: baseActionValue("task.unbind", binding, {
             taskId: task.taskId,
@@ -542,6 +559,43 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           }),
         }),
       ]),
+    ],
+  };
+}
+
+export function createArchivedThreadCard(data: FeishuArchivedThreadCardData): FeishuInteractiveCard {
+  const note = truncateNote(data.note);
+
+  return {
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+    },
+    header: {
+      title: plainText("Archived Codex Topic"),
+      template: "grey",
+    },
+    elements: [
+      markdown(
+        [
+          "**This Feishu topic is archived**",
+          "- new plain text, photos, and files in this topic will no longer reach the workstation",
+          "- start a new Feishu topic with the bot when you want to launch or bind another task",
+          "- the original host task is detached but not deleted",
+        ].join("\n"),
+      ),
+      divider(),
+      markdown(
+        [
+          "**Archived Task**",
+          `taskId: ${data.taskId ?? "unknown"}`,
+          `title: ${data.taskTitle ?? "unknown"}`,
+          data.archivedAt ? `archivedAt: ${data.archivedAt}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      ),
+      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
     ],
   };
 }
