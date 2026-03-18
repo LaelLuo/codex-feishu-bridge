@@ -14,6 +14,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:codexFeishuBridge.openMonitor",
     "onCommand:codexFeishuBridge.focusTaskInMonitor",
     "onCommand:codexFeishuBridge.refresh",
@@ -105,6 +106,11 @@
           "type": "string",
           "default": "/ws",
           "description": "WebSocket path exposed by the bridge-daemon."
+        },
+        "codexFeishuBridge.openMonitorOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the monitor automatically when the extension activates."
         }
       }
     }

@@ -40,6 +40,11 @@ interface DevOpenDiffRequest {
   diffPath?: string;
 }
 
+function envFlagEnabled(name: string): boolean {
+  const rawValue = process.env[name]?.trim().toLowerCase();
+  return rawValue === "1" || rawValue === "true" || rawValue === "yes" || rawValue === "on";
+}
+
 function bridgeConfiguration(): { baseUrl: string; wsPath: string } {
   const config = vscode.workspace.getConfiguration("codexFeishuBridge");
   return {
@@ -376,21 +381,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
 
-  void services.store.start().catch((error: unknown) => {
-    void vscode.window.showErrorMessage(
-      error instanceof Error ? `Failed to start Codex bridge store: ${error.message}` : "Failed to start Codex bridge store.",
-    );
-  });
+  let storeStartPromise: Promise<void> | null = null;
+  let storeStarted = false;
+
+  async function ensureStoreStarted(showError = true): Promise<boolean> {
+    if (storeStarted) {
+      return true;
+    }
+
+    if (!storeStartPromise) {
+      storeStartPromise = services.store.start();
+    }
+
+    try {
+      await storeStartPromise;
+      storeStarted = true;
+      return true;
+    } catch (error) {
+      storeStartPromise = null;
+      if (showError) {
+        void vscode.window.showErrorMessage(
+          error instanceof Error ? `Failed to start Codex bridge store: ${error.message}` : "Failed to start Codex bridge store.",
+        );
+      }
+      return false;
+    }
+  }
+
+  async function runWithStartedStore<T>(action: () => Promise<T>, showError = true): Promise<T | undefined> {
+    if (!(await ensureStoreStarted(showError))) {
+      return undefined;
+    }
+    return action();
+  }
+
+  const shouldAutoOpenMonitor =
+    envFlagEnabled("CODEX_FEISHU_BRIDGE_AUTO_OPEN_MONITOR") ||
+    vscode.workspace.getConfiguration("codexFeishuBridge").get<boolean>("openMonitorOnStartup", false);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexFeishuBridge.refresh", async () => {
+    vscode.commands.registerCommand("codexFeishuBridge.refresh", async () => runWithStartedStore(async () => {
       await services.store.refresh();
       void vscode.window.showInformationMessage("Codex bridge tasks refreshed.");
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.openMonitor", async () => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.openMonitor", async () => runWithStartedStore(async () => {
       await monitorPanel.show();
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.login", async () => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.login", async () => runWithStartedStore(async () => {
       const result = await services.client.login();
       if (result.authUrl) {
         await vscode.env.openExternal(vscode.Uri.parse(result.authUrl));
@@ -399,8 +436,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showInformationMessage("Bridge login request started.");
       }
       await services.store.refresh();
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.newTask", async () => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.newTask", async () => runWithStartedStore(async () => {
       const title = await vscode.window.showInputBox({
         title: "Create a Codex bridge task",
         placeHolder: "Task title",
@@ -424,16 +461,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (latestTask) {
         await monitorPanel.show(latestTask, true);
       }
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.focusTaskInMonitor", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.focusTaskInMonitor", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a task to monitor"));
       if (!task) {
         return;
       }
       await monitorPanel.show(task);
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.resumeTask", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.resumeTask", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a task to resume"));
       if (!task) {
@@ -443,16 +480,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await services.client.resumeTask(task.taskId);
       await services.store.refresh();
       await monitorPanel.show(task);
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.importThreads", async () => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.importThreads", async () => runWithStartedStore(async () => {
       const threadId = await vscode.window.showInputBox({
         title: "Import Codex threads",
         placeHolder: "Leave empty to import every visible thread",
       });
       await services.client.importThreads(threadId?.trim() || undefined);
       await services.store.refresh();
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.sendMessage", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.sendMessage", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a task to message"));
       if (!task) {
@@ -460,8 +497,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       await monitorPanel.show(task, true);
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.interruptTask", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.interruptTask", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a running task to interrupt", (candidate) => candidate.activeTurnId !== undefined));
       if (!task) {
@@ -470,14 +507,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       await services.client.interruptTask(task.taskId);
       await services.store.refresh();
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.approveCommand", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.approveCommand", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       await approveByKind(services, taskOrItem, "command");
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.approveFileChange", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.approveFileChange", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       await approveByKind(services, taskOrItem, "file-change");
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.retryTurn", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.retryTurn", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a task to retry"));
       if (!task) {
@@ -489,8 +526,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         initialValue: "Retry the last turn, keep the existing context, and continue.",
         placeholder: "Optional retry instructions",
       });
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.openDiff", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.openDiff", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a task with diff output", (candidate) => candidate.diffs.length > 0));
       if (!task) {
@@ -519,8 +556,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       await openTaskDiff(task, selectedDiff.path);
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.openTaskDetails", async (taskOrItem?: BridgeTask | TaskTreeItem) => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.openTaskDetails", async (taskOrItem?: BridgeTask | TaskTreeItem) => runWithStartedStore(async () => {
       const task = (await resolveTaskArgument(services.store, taskOrItem)) ??
         (await pickTask(services.store, "Select a task to inspect"));
       if (!task) {
@@ -529,8 +566,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       const freshTask = await services.client.getTask(task.taskId);
       openTaskDetailPanel(freshTask);
-    }),
-    vscode.commands.registerCommand("codexFeishuBridge.openStatus", async () => {
+    })),
+    vscode.commands.registerCommand("codexFeishuBridge.openStatus", async () => runWithStartedStore(async () => {
       await services.store.refresh();
       const snapshot = services.store.getSnapshot();
       openStatusPanel({
@@ -539,26 +576,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         connection: snapshot.connection,
         taskCount: snapshot.tasks.length,
       });
-    }),
+    })),
   );
 
   if (context.extensionMode !== vscode.ExtensionMode.Production) {
     context.subscriptions.push(
-      vscode.commands.registerCommand("codexFeishuBridge.dev.getSnapshot", async () => {
+      vscode.commands.registerCommand("codexFeishuBridge.dev.getSnapshot", async () => runWithStartedStore(async () => {
         await services.store.refresh();
         return services.store.getSnapshot();
-      }),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.getTaskTree", async () => {
+      })),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.getTaskTree", async () => runWithStartedStore(async () => {
         await services.store.refresh();
         return serializeTaskTree(treeProvider);
-      }),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.openMonitor", async () => {
+      })),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.openMonitor", async () => runWithStartedStore(async () => {
         await monitorPanel.show();
         return {
           opened: true,
         };
-      }),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.createTask", async (request: DevCreateTaskRequest) => {
+      })),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.createTask", async (request: DevCreateTaskRequest) => runWithStartedStore(async () => {
         const task = await services.client.createTask({
           title: request.title,
           workspaceRoot: request.workspaceRoot,
@@ -567,33 +604,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         });
         await services.store.refresh();
         return services.client.getTask(task.taskId);
-      }),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.sendMessage", async (request: DevSendMessageRequest) =>
+      })),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.sendMessage", async (request: DevSendMessageRequest) => runWithStartedStore(() =>
         sendTaskMessage(services, request.taskId, {
           content: request.content,
           imagePaths: request.imagePaths,
           source: "vscode",
           replyToFeishu: request.replyToFeishu,
-        })),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.resolveApproval", async (request: DevResolveApprovalRequest) =>
-        resolveTaskApproval(services, request)),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.openTaskDetails", async (taskId: string) => {
+        }))),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.resolveApproval", async (request: DevResolveApprovalRequest) => runWithStartedStore(() =>
+        resolveTaskApproval(services, request))),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.openTaskDetails", async (taskId: string) => runWithStartedStore(async () => {
         const task = await services.client.getTask(taskId);
         openTaskDetailPanel(task);
         return {
           taskId: task.taskId,
           title: task.title,
         };
-      }),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.openDiff", async (request: DevOpenDiffRequest) => {
+      })),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.openDiff", async (request: DevOpenDiffRequest) => runWithStartedStore(async () => {
         const task = await services.client.getTask(request.taskId);
         const diff = await openTaskDiff(task, request.diffPath);
         return {
           path: diff.path,
           summary: diffSummaryText(diff.summary),
         };
-      }),
-      vscode.commands.registerCommand("codexFeishuBridge.dev.openStatus", async () => {
+      })),
+      vscode.commands.registerCommand("codexFeishuBridge.dev.openStatus", async () => runWithStartedStore(async () => {
         await services.store.refresh();
         const snapshot = services.store.getSnapshot();
         openStatusPanel({
@@ -606,8 +643,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           connection: snapshot.connection,
           taskCount: snapshot.tasks.length,
         };
-      }),
+      })),
     );
+  }
+
+  if (shouldAutoOpenMonitor) {
+    void runWithStartedStore(async () => {
+      await monitorPanel.show();
+    });
   }
 }
 

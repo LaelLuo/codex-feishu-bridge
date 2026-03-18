@@ -7,6 +7,9 @@
       "request": "launch",
       "preLaunchTask": "Codex Bridge: One Click Start",
       "runtimeExecutable": "${execPath}",
+      "env": {
+        "CODEX_FEISHU_BRIDGE_AUTO_OPEN_MONITOR": "1"
+      },
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extension",
         "--disable-extensions"

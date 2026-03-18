@@ -135,7 +135,7 @@ print_summary() {
 [ready] codex-feishu-bridge is up.
 - Health: http://127.0.0.1:${port}/health
 - Start the VSCode extension with F5 on "Codex Feishu Bridge Extension"
-- In the Extension Development Host, run "Codex Bridge: Open Monitor"
+- The Extension Development Host will open the monitor automatically
 EOF
 }
 
