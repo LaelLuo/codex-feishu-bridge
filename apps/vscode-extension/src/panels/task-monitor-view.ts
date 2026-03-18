@@ -352,6 +352,11 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
         color: var(--muted);
         margin-bottom: 4px;
       }
+      .metric span {
+        display: block;
+        white-space: pre-line;
+        line-height: 1.45;
+      }
       button, textarea, input[type="checkbox"] {
         font: inherit;
       }
@@ -601,19 +606,65 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
         return [account.type, account.email, account.planType].filter(Boolean).join(" · ");
       }
 
+      function formatResetTime(epochSeconds) {
+        if (typeof epochSeconds !== "number" || !Number.isFinite(epochSeconds)) {
+          return "unknown reset";
+        }
+        return new Date(epochSeconds * 1000).toLocaleString(undefined, {
+          month: "numeric",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      function formatWindowDuration(minutes) {
+        if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) {
+          return "?";
+        }
+        if (minutes % 1440 === 0) {
+          return String(minutes / 1440) + "d";
+        }
+        if (minutes % 60 === 0) {
+          return String(minutes / 60) + "h";
+        }
+        return String(minutes) + "m";
+      }
+
+      function remainingPercent(window) {
+        if (!window || typeof window.usedPercent !== "number" || !Number.isFinite(window.usedPercent)) {
+          return "?";
+        }
+        return String(Math.max(0, Math.min(100, 100 - window.usedPercent)));
+      }
+
+      function formatRateWindow(label, window) {
+        if (!window) {
+          return null;
+        }
+        const parts = [
+          label + " " + remainingPercent(window) + "% left",
+          formatWindowDuration(window.windowDurationMins),
+          "reset " + formatResetTime(window.resetsAt),
+        ];
+        return parts.join(" · ");
+      }
+
       function rateSummary() {
         const rate = state.rateLimits?.rateLimits;
         if (!rate) {
           return "Unavailable";
         }
         const lines = [];
-        if (rate.primary) {
-          lines.push(\`Primary \${rate.primary.usedPercent}%\`);
+        const primary = formatRateWindow("Primary", rate.primary);
+        const secondary = formatRateWindow("Secondary", rate.secondary);
+        if (primary) {
+          lines.push(primary);
         }
-        if (rate.secondary) {
-          lines.push(\`Secondary \${rate.secondary.usedPercent}%\`);
+        if (secondary) {
+          lines.push(secondary);
         }
-        return lines.join(" · ") || "Available";
+        return lines.join("\n") || "Available";
       }
 
       function selectedTaskPanel() {
