@@ -10,6 +10,7 @@ docker/.env
 
 .vscode/*
 !.vscode/launch.json
+!.vscode/tasks.json
 
 # Local process records and release history
 docs/status.md

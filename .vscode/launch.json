@@ -5,6 +5,7 @@
       "name": "Codex Feishu Bridge Extension",
       "type": "extensionHost",
       "request": "launch",
+      "preLaunchTask": "Codex Bridge: One Click Start",
       "runtimeExecutable": "${execPath}",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extension",

@@ -47,41 +47,64 @@
 
 ## 快速开始
 
-1. 复制环境文件：
+推荐默认入口：
 
 ```bash
-cp docker/.env.example docker/.env
+./scripts/dev-stack.sh up
 ```
 
-2. 启动开发容器：
+也可以用 npm 包一层：
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example up -d workspace-dev
+npm run start:all
 ```
 
-3. 进入容器并安装依赖：
+这条命令会自动完成：
+
+- 不存在时创建 `docker/.env`
+- 构建并启动 `workspace-dev`
+- 在容器里安装依赖
+- 构建 `shared`、`protocol`、`bridge-daemon`、`vscode-extension`
+- 重建并启动 `bridge-runtime`
+- 等待 `/health` 就绪
+
+首次使用前，如果你要接真实 Feishu 或真实 `stdio`，请先编辑：
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example exec workspace-dev bash
-npm install
+docker/.env
 ```
 
-4. 启动 bridge runtime：
+启动后：
+
+1. 在 VSCode 打开仓库
+2. 直接按 `F5` 运行 `Codex Feishu Bridge Extension`
+3. 新开的 `Extension Development Host` 会连接本地 bridge
+4. 运行命令 `Codex Bridge: Open Monitor`
+
+常用配套命令：
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example up -d bridge-runtime
+npm run status:all
+npm run logs:all
+npm run stop:all
 ```
 
-5. 构建并运行主要测试：
+如果你更想看底层手工步骤，仍然可以直接使用 `docker compose`，但 README 现在默认推荐上面的“一键启动”路径。
 
-```bash
-npm run build:daemon
-npm run test:daemon
-npm run build:extension
-npm run test:extension
-```
+## 一键启动做了什么
 
-如果你要跑真实 `stdio` 与真实飞书，请优先直接使用：
+根脚本 [scripts/dev-stack.sh](./scripts/dev-stack.sh) 提供：
+
+- `up`：准备环境、安装依赖、构建产物、启动 runtime、等待健康检查
+- `down`：停止整套容器
+- `status`：查看 compose 状态和 `/health`
+- `logs`：跟随 `bridge-runtime` 日志
+
+VSCode 的 [`.vscode/launch.json`](./.vscode/launch.json) 也已经挂上同一条启动任务，所以在仓库里按 `F5` 时，会先自动准备好本地 bridge 开发环境。
+
+## 手工路径
+
+如果你要跑真实 `stdio` 与真实飞书，或者想跳过一键脚本直接控制 compose，请优先直接使用：
 
 ```bash
 docker compose -f docker/compose.yaml --env-file docker/.env ...
@@ -122,21 +145,16 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 
 ## VSCode 图形化监视器
 
-先构建扩展：
-
-```bash
-npm run build:extension
-```
-
-然后在 VSCode 打开仓库，并运行 [`.vscode/launch.json`](./.vscode/launch.json) 中的 `Codex Feishu Bridge Extension`。
+在 VSCode 打开仓库后，直接运行 [`.vscode/launch.json`](./.vscode/launch.json) 中的 `Codex Feishu Bridge Extension` 即可。
+这个启动项现在会先自动执行 `Codex Bridge: One Click Start` 任务，再打开新的 `Extension Development Host` 窗口。
 这会启动一个新的 `Extension Development Host` 窗口；扩展当前默认在这个测试窗口里运行，而不是直接注入你正在编辑代码的主窗口。
 
 扩展现在定位为 **Feishu 对话任务的图形化监视器**。推荐桌面工作流是：
 
-1. 启动 `bridge-runtime`，并确认：
+1. 先运行 `./scripts/dev-stack.sh up`，或者直接按 `F5`
+2. 确认：
    - `curl http://127.0.0.1:8787/health`
    - 返回 `backend=stdio` 或 `backend=mock`
-2. 在 VSCode 中按 `F5` 运行 `Codex Feishu Bridge Extension`
 3. 切到新打开的 `Extension Development Host`
 4. 通过命令面板运行 `Codex Bridge: Open Monitor`
 5. 先在监视器页里点击：

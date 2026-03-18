@@ -12,6 +12,10 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "start:all": "bash ./scripts/dev-stack.sh up",
+    "stop:all": "bash ./scripts/dev-stack.sh down",
+    "status:all": "bash ./scripts/dev-stack.sh status",
+    "logs:all": "bash ./scripts/dev-stack.sh logs",
     "compose:config": "docker compose -f docker/compose.yaml --env-file docker/.env.example config",
     "dev:up": "docker compose -f docker/compose.yaml --env-file docker/.env.example up -d workspace-dev",
     "dev:shell": "docker compose -f docker/compose.yaml --env-file docker/.env.example exec workspace-dev bash",

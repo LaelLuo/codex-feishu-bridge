@@ -19,7 +19,7 @@ The OpenAI VSCode extension is not required as the runtime authority for this pr
 
 - CLI-first runtime with `codex app-server`
 - Docker-first TypeScript development workflow
-- VSCode persistent monitor sidebar, task highlighting, diff view, approvals, and desktop handoff messaging
+- VSCode monitor editor tab, task highlighting, diff view, approvals, and desktop handoff messaging
 - Feishu long-connection bridge with pure-thread conversations
 - Card-first Feishu task creation and control
 - Manual import and resume support for existing Codex threads
@@ -40,36 +40,60 @@ The OpenAI VSCode extension is not required as the runtime authority for this pr
 
 ## Quick Start
 
-1. Copy `docker/.env.example` to `docker/.env` and fill the values you want to use.
-2. Start the development container:
+Use the one-click bootstrap entry by default:
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example up -d workspace-dev
+./scripts/dev-stack.sh up
 ```
 
-3. Enter the container and install dependencies:
+You can also call the same flow through npm:
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example exec workspace-dev bash
-npm install
+npm run start:all
 ```
 
-4. Start the bridge runtime:
+This path now handles:
+
+- creating `docker/.env` when it is missing
+- starting `workspace-dev`
+- installing npm dependencies in Docker
+- building `shared`, `protocol`, `bridge-daemon`, and `vscode-extension`
+- recreating `bridge-runtime`
+- waiting for `/health`
+
+Before the first real run, edit `docker/.env` if you need real Feishu credentials or real `stdio` runtime settings.
+
+Then:
+
+1. Open the repository in VSCode.
+2. Press `F5` on `Codex Feishu Bridge Extension`.
+3. The launch target now runs the same one-click bootstrap as a VSCode `preLaunchTask`.
+4. In the Extension Development Host, run `Codex Bridge: Open Monitor`.
+
+Companion commands:
 
 ```bash
-docker compose -f docker/compose.yaml --env-file docker/.env.example up -d bridge-runtime
+npm run status:all
+npm run logs:all
+npm run stop:all
 ```
 
-5. Build and test the main packages:
+If you prefer explicit low-level Docker commands, they still work, but the repository now documents the one-click path as the primary workflow.
 
-```bash
-npm run build:daemon
-npm run test:daemon
-npm run build:extension
-npm run test:extension
-```
+## One-Click Bootstrap
 
-For real `stdio` and Feishu runs, prefer calling `docker compose` directly with `--env-file docker/.env`.
+The root script [scripts/dev-stack.sh](../scripts/dev-stack.sh) exposes:
+
+- `up` for environment preparation, install, build, runtime start, and health wait
+- `down` for stopping the stack
+- `status` for compose status and `/health`
+- `logs` for following the bridge runtime logs
+
+The VSCode launch entry in [`.vscode/launch.json`](../.vscode/launch.json) reuses the same bootstrap flow.
+
+## Manual Path
+
+For real `stdio` and Feishu runs, or if you want full manual control, prefer calling `docker compose` directly with `--env-file docker/.env`.
 
 ## Runtime and Validation
 
@@ -106,25 +130,22 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 
 ## VSCode Monitor
 
-Build the extension:
-
-```bash
-npm run build:extension
-```
-
-Then open the repository in VSCode and run the `Codex Feishu Bridge Extension` launch target from [`.vscode/launch.json`](../.vscode/launch.json).
+Open the repository in VSCode and run the `Codex Feishu Bridge Extension` launch target from [`.vscode/launch.json`](../.vscode/launch.json).
+It now runs `Codex Bridge: One Click Start` first, then opens the Extension Development Host.
 
 The extension is positioned as a **graphical monitor for Feishu task threads**. The recommended desktop workflow is:
 
-1. Start or continue the task from Feishu.
-2. Use `Feishu Task List` to inspect all daemon tasks and quickly identify Feishu-bound ones.
-3. Use the persistent `Feishu Task Monitor` sidebar to inspect:
+1. Run `./scripts/dev-stack.sh up`, or simply press `F5`.
+2. Confirm that `http://127.0.0.1:8787/health` is reachable.
+3. Start or continue the task from Feishu.
+4. Use `Codex Bridge: Open Monitor` to open the monitor editor page.
+5. Inspect:
    - task status, workspace, thread id, and Feishu binding
    - conversation timeline with `feishu` / `vscode` / `runtime` source tags
    - pending approvals
    - diff summaries
-4. Continue the task from the monitor's persistent composer instead of a popup input box.
-5. Handle interrupt, retry, approvals, diff opening, and unbind actions from the same sidebar.
+6. Continue the task from the monitor's persistent composer instead of a popup input box.
+7. Handle interrupt, retry, approvals, diff opening, and unbind actions from the same page.
 
 Desktop-origin messages are not mirrored back into Feishu as user text. For Feishu-bound tasks, the monitor exposes a task-level toggle that controls whether the resulting agent reply should continue syncing back to the Feishu thread.
 

@@ -30,6 +30,7 @@
 - 负责任务列表、编辑器页监视器、任务详情、diff 面板、审批队列、登录状态页
 - 负责桌面图片输入和 daemon 交互
 - 主监视器通过 `Open Monitor` 命令以 Webview editor tab 打开，而不是常驻侧栏
+- VSCode 调试启动项通过 `preLaunchTask` 复用根脚本的一键启动流程
 - 监视器页内置任务列表、Conversation、Desktop Composer，以及本地任务多选批量清理
 - 任务卡片同时显示任务启动来源标签和当前 Feishu 绑定标签，例如 `VSCODE + FEISHU`、`CLI + FEISHU`
 - 暴露 `openMonitor`、`newTask`、`resumeTask`、`importThreads`、`sendMessage`、`interruptTask`、`approve*`、`retryTurn`、`openDiff`
@@ -113,6 +114,7 @@
 ## CLI 包装器
 
 - 根脚本 `scripts/bridge-cli.mjs` 提供 `list`、`import`、`resume`、`send`
+- 根脚本 `scripts/dev-stack.sh` 提供 `up`、`down`、`status`、`logs` 的一键开发环境启动入口
 - 在 `workspace-dev` 容器里使用时，daemon 地址默认应设为 `BRIDGE_BASE_URL=http://bridge-runtime:8787`
 
 ## Optional Coordination Utilities

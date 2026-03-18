@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Codex Bridge: One Click Start",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/dev-stack.sh",
+      "args": [
+        "up"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      }
+    },
+    {
+      "label": "Codex Bridge: Stop Stack",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/dev-stack.sh",
+      "args": [
+        "down"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      }
+    }
+  ]
+}
