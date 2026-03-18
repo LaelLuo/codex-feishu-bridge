@@ -127,6 +127,14 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
           return;
         }
         case "forget-imported-tasks": {
+          const confirmed = await vscode.window.showWarningMessage(
+            "Clear all imported local tasks from the bridge monitor? Host Codex threads in ~/.codex will be kept.",
+            { modal: true },
+            "Clear Imported Local Tasks",
+          );
+          if (!confirmed) {
+            return;
+          }
           await this.options.client.forgetImportedTasks();
           await this.options.store.refresh();
           await this.postState();
@@ -225,6 +233,14 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
         case "forget-local-task": {
           const task = this.getTask(payload.taskId);
           if (!task || task.feishuBinding) {
+            return;
+          }
+          const confirmed = await vscode.window.showWarningMessage(
+            "Forget this local task record from the bridge monitor? The underlying host Codex thread will not be deleted.",
+            { modal: true },
+            "Forget Local Task",
+          );
+          if (!confirmed) {
             return;
           }
           await this.options.forgetLocalTask(task.taskId);
@@ -865,9 +881,6 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
             vscode.postMessage({ type: "refresh" });
             return;
           case "forget-imported-tasks":
-            if (!window.confirm("Clear all imported local tasks from the bridge monitor? Host Codex threads in ~/.codex will be kept.")) {
-              return;
-            }
             vscode.postMessage({ type: "forget-imported-tasks" });
             return;
           case "open-status":
@@ -893,9 +906,6 @@ export class TaskMonitorViewProvider implements vscode.WebviewViewProvider, vsco
             return;
           case "forget-local-task":
             if (!taskId) {
-              return;
-            }
-            if (!window.confirm("Forget this local task record from the bridge monitor? The underlying host Codex thread will not be deleted.")) {
               return;
             }
             vscode.postMessage({ type: "forget-local-task", taskId });
