@@ -92,16 +92,7 @@ class SurfaceAwareRuntime implements CodexRuntime {
   }
 
   async resumeThread(threadId: string): Promise<CodexThreadDescriptor> {
-    this.lastThreadId = threadId;
-    return {
-      id: threadId,
-      name: "Surface task",
-      cwd: TEST_REPO_ROOT,
-      updatedAt: "2026-03-18T00:00:00.000Z",
-      status: {
-        type: "idle",
-      },
-    };
+    throw new Error(`resumeThread should not be called for bridge-managed task ${threadId}`);
   }
 
   async startTurn(params: { threadId: string; input: CodexInputItem[] }): Promise<CodexTurnDescriptor> {

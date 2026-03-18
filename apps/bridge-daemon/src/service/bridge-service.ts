@@ -885,7 +885,7 @@ export class BridgeService {
   }
 
   private async resumeImportedTaskBeforeMessage(task: BridgeTask): Promise<void> {
-    if (!this.usesImportedSyntheticConversation(task)) {
+    if (!this.canRefreshImportedTaskConversation(task)) {
       return;
     }
 
