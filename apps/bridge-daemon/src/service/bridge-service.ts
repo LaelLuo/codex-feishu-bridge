@@ -13,6 +13,7 @@ import {
   type FeishuThreadBinding,
   type ImageAsset,
   type MessageAuthor,
+  type MessageSurface,
   type QueuedApproval,
   type TaskExecutionProfile,
   type TaskDiffEntry,
@@ -64,11 +65,19 @@ export interface CreateTaskRequest {
   prompt?: string;
   imageAssetIds?: string[];
   executionProfile?: TaskExecutionProfile;
+  source?: MessageSurface;
+  replyToFeishu?: boolean;
 }
 
 export interface TaskMessageRequest {
   content: string;
   imageAssetIds?: string[];
+  source?: MessageSurface;
+  replyToFeishu?: boolean;
+}
+
+export interface TaskSettingsRequest {
+  desktopReplySyncToFeishu?: boolean;
 }
 
 export interface UploadImageRequest {
@@ -92,6 +101,11 @@ interface PendingTurnStart {
   resolve: () => void;
 }
 
+interface PendingConversationSource {
+  surface: MessageSurface;
+  replyToFeishu: boolean;
+}
+
 function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): TaskExecutionProfile {
   return {
     ...(profile?.model ? { model: profile.model } : {}),
@@ -104,6 +118,7 @@ function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): T
 function hydratePersistedTask(task: BridgeTask): BridgeTask {
   const hydratedTask = structuredClone(task);
   hydratedTask.executionProfile = normalizeExecutionProfile(task.executionProfile);
+  hydratedTask.desktopReplySyncToFeishu = task.desktopReplySyncToFeishu ?? Boolean(task.feishuBinding);
   hydratedTask.feishuBindingDisabled = task.feishuBindingDisabled ?? false;
   hydrateTaskDiffs(hydratedTask);
   return hydratedTask;
@@ -112,6 +127,7 @@ function hydratePersistedTask(task: BridgeTask): BridgeTask {
 function cloneTask(task: BridgeTask): BridgeTask {
   const clonedTask = structuredClone(task);
   clonedTask.executionProfile = normalizeExecutionProfile(clonedTask.executionProfile);
+  clonedTask.desktopReplySyncToFeishu = clonedTask.desktopReplySyncToFeishu ?? Boolean(clonedTask.feishuBinding);
   hydrateTaskDiffs(clonedTask);
   return clonedTask;
 }
@@ -340,6 +356,9 @@ function hydrateTaskDiffs(task: BridgeTask): void {
 export class BridgeService {
   private readonly emitter = new EventEmitter();
   private readonly tasks = new Map<string, BridgeTask>();
+  private readonly pendingConversationSources = new Map<string, PendingConversationSource[]>();
+  private readonly pendingTurnReplyPolicies = new Map<string, PendingConversationSource[]>();
+  private readonly turnReplyPolicies = new Map<string, PendingConversationSource>();
   private readonly pendingTurnStarts = new Map<string, PendingTurnStart>();
   private readonly startedTurns = new Set<string>();
   private readonly stateFile: string;
@@ -459,6 +478,7 @@ export class BridgeService {
     task.title = request.title || task.title;
     task.workspaceRoot = workspaceRoot;
     task.executionProfile = normalizeExecutionProfile(request.executionProfile);
+    task.desktopReplySyncToFeishu = request.replyToFeishu ?? task.desktopReplySyncToFeishu;
     this.touchTask(task);
     await this.persistState();
     this.emitEvent(task.taskId, "task.created", { task: cloneTask(task) });
@@ -467,6 +487,8 @@ export class BridgeService {
       task = await this.sendMessage(task.taskId, {
         content: request.prompt ?? "",
         imageAssetIds: request.imageAssetIds,
+        source: request.source,
+        replyToFeishu: request.replyToFeishu,
       });
     }
 
@@ -505,14 +527,31 @@ export class BridgeService {
   async sendMessage(taskId: string, request: TaskMessageRequest): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
     const input = this.buildInputItems(task, request);
+    const messageSource = request.source ?? "runtime";
+    const replyToFeishu =
+      request.replyToFeishu ??
+      (messageSource === "feishu" ? true : task.feishuBinding ? task.desktopReplySyncToFeishu : false);
+    this.enqueueConversationSource(task.taskId, {
+      surface: messageSource,
+      replyToFeishu,
+    });
 
     if (task.activeTurnId && task.status === "running") {
+      this.turnReplyPolicies.set(task.activeTurnId, {
+        surface: messageSource,
+        replyToFeishu,
+      });
       await this.steerActiveTurn(task.threadId, task.activeTurnId, input);
       this.emitEvent(task.taskId, "task.steered", {
         taskId: task.taskId,
         turnId: task.activeTurnId,
       });
     } else {
+      const pendingReplyPolicy = {
+        surface: messageSource,
+        replyToFeishu,
+      } satisfies PendingConversationSource;
+      this.enqueuePendingTurnReplyPolicy(task.taskId, pendingReplyPolicy);
       const turn = await this.options.runtime.startTurn({
         threadId: task.threadId,
         input,
@@ -521,6 +560,7 @@ export class BridgeService {
         approvalPolicy: task.executionProfile.approvalPolicy,
       });
       this.trackPendingTurnStart(turn.id);
+      this.turnReplyPolicies.set(turn.id, pendingReplyPolicy);
       task.activeTurnId = task.activeTurnId ?? turn.id;
       if (task.status === "idle" || task.status === "queued" || task.status === "completed") {
         task.status = "running";
@@ -543,6 +583,7 @@ export class BridgeService {
     }
     await this.interruptActiveTurn(task.threadId, task.activeTurnId);
     this.clearTurnTracking(task.activeTurnId);
+    this.turnReplyPolicies.delete(task.activeTurnId);
 
     task.status = "interrupted";
     task.activeTurnId = undefined;
@@ -587,6 +628,7 @@ export class BridgeService {
     const task = this.requireTask(taskId);
     task.feishuBinding = binding;
     task.feishuBindingDisabled = false;
+    task.desktopReplySyncToFeishu = true;
     this.touchTask(task);
     await this.persistState();
     this.emitEvent(task.taskId, "feishu.thread.bound", {
@@ -605,6 +647,20 @@ export class BridgeService {
     this.emitEvent(task.taskId, "task.updated", {
       task: cloneTask(task),
       feishuUnbound: true,
+    });
+    return cloneTask(task);
+  }
+
+  async updateTaskSettings(taskId: string, request: TaskSettingsRequest): Promise<BridgeTask> {
+    const task = this.requireTask(taskId);
+    if (typeof request.desktopReplySyncToFeishu === "boolean") {
+      task.desktopReplySyncToFeishu = request.desktopReplySyncToFeishu;
+    }
+    this.touchTask(task);
+    await this.persistState();
+    this.emitEvent(task.taskId, "task.updated", {
+      task: cloneTask(task),
+      settingsUpdated: true,
     });
     return cloneTask(task);
   }
@@ -661,6 +717,44 @@ export class BridgeService {
     return items;
   }
 
+  private enqueueConversationSource(taskId: string, source: PendingConversationSource): void {
+    const queue = this.pendingConversationSources.get(taskId) ?? [];
+    queue.push(source);
+    this.pendingConversationSources.set(taskId, queue);
+  }
+
+  private dequeueConversationSource(taskId: string): PendingConversationSource | null {
+    const queue = this.pendingConversationSources.get(taskId);
+    if (!queue?.length) {
+      return null;
+    }
+
+    const next = queue.shift() ?? null;
+    if (!queue.length) {
+      this.pendingConversationSources.delete(taskId);
+    }
+    return next;
+  }
+
+  private enqueuePendingTurnReplyPolicy(taskId: string, source: PendingConversationSource): void {
+    const queue = this.pendingTurnReplyPolicies.get(taskId) ?? [];
+    queue.push(source);
+    this.pendingTurnReplyPolicies.set(taskId, queue);
+  }
+
+  private takePendingTurnReplyPolicy(taskId: string): PendingConversationSource | null {
+    const queue = this.pendingTurnReplyPolicies.get(taskId);
+    if (!queue?.length) {
+      return null;
+    }
+
+    const next = queue.shift() ?? null;
+    if (!queue.length) {
+      this.pendingTurnReplyPolicies.delete(taskId);
+    }
+    return next;
+  }
+
   private async handleRuntimeNotification(notification: CodexRuntimeNotification): Promise<void> {
     switch (notification.method) {
       case "auth.login.started":
@@ -696,6 +790,9 @@ export class BridgeService {
         }
         task.status = mapRuntimeStatus(params.status);
         if (task.status !== "running") {
+          if (task.activeTurnId) {
+            this.turnReplyPolicies.delete(task.activeTurnId);
+          }
           this.clearTurnTracking(task.activeTurnId);
         }
         this.touchTask(task);
@@ -715,7 +812,14 @@ export class BridgeService {
         if (!task) {
           return;
         }
+        if (!this.turnReplyPolicies.has(turn.id)) {
+          const pendingReplyPolicy = this.takePendingTurnReplyPolicy(task.taskId);
+          if (pendingReplyPolicy) {
+            this.turnReplyPolicies.set(turn.id, pendingReplyPolicy);
+          }
+        }
         if (task.activeTurnId && task.activeTurnId !== turn.id) {
+          this.turnReplyPolicies.delete(task.activeTurnId);
           this.clearTurnTracking(task.activeTurnId);
         }
         this.markTurnStarted(turn.id);
@@ -738,6 +842,7 @@ export class BridgeService {
         if (!task) {
           return;
         }
+        this.turnReplyPolicies.delete(turn.id);
         this.clearTurnTracking(turn.id);
         task.activeTurnId = undefined;
         task.status = mapTurnStatus(turn.status);
@@ -790,7 +895,7 @@ export class BridgeService {
         if (!task) {
           return;
         }
-        this.applyItemToTask(task, params.item);
+        this.applyItemToTask(task, params.item, params.turnId);
         this.touchTask(task);
         await this.persistState();
         this.emitEvent(task.taskId, "task.updated", {
@@ -873,14 +978,23 @@ export class BridgeService {
     }
   }
 
-  private applyItemToTask(task: BridgeTask, item: CodexThreadItem): void {
+  private applyItemToTask(task: BridgeTask, item: CodexThreadItem, turnId?: string): void {
+    if (turnId && !this.turnReplyPolicies.has(turnId)) {
+      const pendingReplyPolicy = this.takePendingTurnReplyPolicy(task.taskId);
+      if (pendingReplyPolicy) {
+        this.turnReplyPolicies.set(turnId, pendingReplyPolicy);
+      }
+    }
+
     switch (item.type) {
       case "userMessage": {
         const inputContent = "content" in item ? item.content : [];
         const { content, imageAssetPaths } = conversationContentFromInput(inputContent);
+        const source = this.dequeueConversationSource(task.taskId)?.surface ?? "runtime";
         this.upsertConversation(task, {
           messageId: item.id,
           author: "user",
+          surface: source,
           content,
           createdAt: new Date().toISOString(),
           imageAssetIds: task.imageAssets
@@ -891,9 +1005,11 @@ export class BridgeService {
       }
       case "agentMessage": {
         const text = "text" in item ? item.text : "";
+        const replyPolicy = turnId ? this.turnReplyPolicies.get(turnId) : null;
         this.upsertConversation(task, {
           messageId: item.id,
           author: "agent",
+          surface: replyPolicy?.replyToFeishu && task.feishuBinding ? "feishu" : replyPolicy?.surface ?? "runtime",
           content: text,
           createdAt: new Date().toISOString(),
         });

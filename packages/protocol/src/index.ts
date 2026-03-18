@@ -36,6 +36,7 @@ export type ApprovalState = "pending" | "accepted" | "declined" | "cancelled" | 
 export type DesktopClientKind = "vscode-extension" | "cli-wrapper" | "diagnostic-client";
 export type FeishuActionKind = "reply" | "steer" | "interrupt" | "approve" | "cancel" | "retry";
 export type MessageAuthor = "user" | "agent" | "system";
+export type MessageSurface = "feishu" | "vscode" | "runtime";
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
@@ -70,6 +71,7 @@ export interface TaskDiffEntry {
 export interface ConversationMessage {
   messageId: string;
   author: MessageAuthor;
+  surface: MessageSurface;
   content: string;
   createdAt: string;
   imageAssetIds?: string[];
@@ -103,6 +105,7 @@ export interface BridgeTask {
   activeTurnId?: string;
   latestSummary?: string;
   executionProfile: TaskExecutionProfile;
+  desktopReplySyncToFeishu: boolean;
   feishuBinding?: FeishuThreadBinding;
   feishuBindingDisabled?: boolean;
   pendingApprovals: QueuedApproval[];
@@ -148,6 +151,7 @@ export function createBridgeTask(seed: BridgeTaskSeed): BridgeTask {
     workspaceRoot: seed.workspaceRoot,
     status: "idle",
     executionProfile: structuredClone(seed.executionProfile ?? {}),
+    desktopReplySyncToFeishu: false,
     feishuBindingDisabled: false,
     pendingApprovals: [],
     diffs: [],

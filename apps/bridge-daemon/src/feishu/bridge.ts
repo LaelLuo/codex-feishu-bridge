@@ -243,6 +243,7 @@ function formatTaskSummary(task: BridgeTask): string {
     `pendingApprovals: ${task.pendingApprovals.length}`,
     `diffs: ${task.diffs.length}`,
     `messages: ${task.conversation.length}`,
+    `desktopReplySyncToFeishu: ${task.desktopReplySyncToFeishu}`,
     ...formatExecutionProfile(task.executionProfile),
     task.feishuBinding ? `threadKey: ${task.feishuBinding.threadKey}` : "threadKey: unbound",
   ].join("\n");
@@ -768,6 +769,7 @@ export class FeishuBridge {
     }
 
     const payload = event.payload as {
+      task?: BridgeTask;
       item?: {
         id?: string;
         type?: string;
@@ -780,6 +782,11 @@ export class FeishuBridge {
     }
 
     if (this.deliveredAgentMessageIds.has(item.id)) {
+      return null;
+    }
+
+    const syncedConversationEntry = payload.task?.conversation.find((entry) => entry.messageId === item.id);
+    if (syncedConversationEntry && syncedConversationEntry.surface !== "feishu") {
       return null;
     }
 
@@ -882,6 +889,8 @@ export class FeishuBridge {
     try {
       await this.options.service.sendMessage(task.taskId, {
         content: text || `Message from ${actorId}`,
+        source: "feishu",
+        replyToFeishu: true,
       });
     } catch (error) {
       this.options.logger.warn("failed to route feishu task message", {
@@ -985,6 +994,7 @@ export class FeishuBridge {
           ...formatExecutionProfile(task.executionProfile),
           binding ? `threadKey: ${binding.threadKey}` : undefined,
           binding?.rootMessageId ? `rootMessageId: ${binding.rootMessageId}` : undefined,
+          `desktopReplySyncToFeishu: ${task.desktopReplySyncToFeishu}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -1081,6 +1091,8 @@ export class FeishuBridge {
       case "retry":
         await this.options.service.sendMessage(task.taskId, {
           content: args.join(" ") || "Retry the last turn and continue.",
+          source: "feishu",
+          replyToFeishu: true,
         });
         await this.replyToMessage(replyTargetId, `Queued retry for task ${task.taskId}.`);
         return;
@@ -1497,6 +1509,7 @@ export class FeishuBridge {
         const task = await this.options.service.createTask({
           title: createTaskTitleFromDraft(draft),
           executionProfile,
+          replyToFeishu: true,
         });
         await this.options.service.bindFeishuThread(task.taskId, currentBinding);
         this.deleteThreadDraft(currentBinding);
@@ -1514,6 +1527,8 @@ export class FeishuBridge {
           void this.options.service
             .sendMessage(task.taskId, {
               content: draft.prompt,
+              source: "feishu",
+              replyToFeishu: true,
             })
             .catch((error) => {
               this.options.logger.warn("failed to queue initial draft prompt from slash create", {
@@ -1656,6 +1671,7 @@ export class FeishuBridge {
           const task = await this.options.service.createTask({
             title: createTaskTitleFromDraft(draft),
             executionProfile,
+            replyToFeishu: true,
           });
           await this.options.service.bindFeishuThread(task.taskId, binding);
           this.deleteThreadDraft(binding);
@@ -1678,6 +1694,8 @@ export class FeishuBridge {
             void this.options.service
               .sendMessage(task.taskId, {
                 content: draft.prompt,
+                source: "feishu",
+                replyToFeishu: true,
               })
               .catch((error) => {
                 this.options.logger.warn("failed to queue initial draft prompt from card create", {
@@ -1732,6 +1750,8 @@ export class FeishuBridge {
       case "task.retry":
         await this.options.service.sendMessage(task.taskId, {
           content: "Retry the last turn and continue.",
+          source: "feishu",
+          replyToFeishu: true,
         });
         note = `Queued retry for task ${task.taskId}.`;
         break;

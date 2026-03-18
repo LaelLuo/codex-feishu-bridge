@@ -20,6 +20,7 @@ describe("protocol helpers", () => {
     assert.equal(task.taskId, "thread-123");
     assert.equal(task.threadId, "thread-123");
     assert.equal(task.status, "idle");
+    assert.equal(task.desktopReplySyncToFeishu, false);
     assert.deepEqual(task.pendingApprovals, []);
     assert.deepEqual(task.diffs, []);
   });

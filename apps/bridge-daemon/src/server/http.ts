@@ -9,6 +9,7 @@ import {
   BridgeService,
   type BridgeServiceSnapshot,
   type CreateTaskRequest,
+  type TaskSettingsRequest,
   type TaskMessageRequest,
   type UploadImageRequest,
 } from "../service/bridge-service";
@@ -192,7 +193,16 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
           const task = await service.sendMessage(taskId, {
             content: body.content ?? "",
             imageAssetIds: body.imageAssetIds ?? [],
+            source: body.source,
+            replyToFeishu: body.replyToFeishu,
           });
+          sendJson(response, 200, { task });
+          return;
+        }
+
+        if (request.method === "POST" && segments.length === 3 && segments[2] === "settings") {
+          const body = await readJsonBody<TaskSettingsRequest>(request);
+          const task = await service.updateTaskSettings(taskId, body);
           sendJson(response, 200, { task });
           return;
         }
@@ -218,6 +228,12 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
             webhookTenantKey?: string;
           }>(request);
           const task = await service.bindFeishuThread(taskId, body);
+          sendJson(response, 200, { task });
+          return;
+        }
+
+        if (request.method === "POST" && segments.length === 4 && segments[2] === "feishu" && segments[3] === "unbind") {
+          const task = await service.unbindFeishuThread(taskId);
           sendJson(response, 200, { task });
           return;
         }

@@ -133,21 +133,56 @@ describe("bridge daemon task http server", () => {
         body: JSON.stringify({
           content: "Please summarize the attachment",
           imageAssetIds: [upload.asset.assetId],
+          source: "vscode",
+          replyToFeishu: false,
         }),
       }).then((result) => result.json());
       assert.equal(replied.task.taskId, secondTaskId);
+
+      const bound = await fetch(`${baseUrl}/tasks/${secondTaskId}/feishu/bind`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          chatId: "oc_chat",
+          threadKey: "omt_bound",
+          rootMessageId: "om_root",
+        }),
+      }).then((result) => result.json());
+      assert.equal(bound.task.desktopReplySyncToFeishu, true);
+
+      const updatedSettings = await fetch(`${baseUrl}/tasks/${secondTaskId}/settings`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          desktopReplySyncToFeishu: false,
+        }),
+      }).then((result) => result.json());
+      assert.equal(updatedSettings.task.desktopReplySyncToFeishu, false);
+
+      const unbound = await fetch(`${baseUrl}/tasks/${secondTaskId}/feishu/unbind`, {
+        method: "POST",
+      }).then((result) => result.json());
+      assert.equal(unbound.task.feishuBinding, undefined);
 
       await waitFor(() => {
         const secondTaskSnapshot = service.getTask(secondTaskId);
         return Boolean(
           secondTaskSnapshot?.imageAssets.length === 1 &&
-            secondTaskSnapshot.conversation.some((entry) => entry.author === "user"),
+            secondTaskSnapshot.conversation.some((entry) => entry.author === "user" && entry.surface === "vscode"),
         );
       }, "task snapshots");
 
       const secondTaskSnapshot = await fetch(`${baseUrl}/tasks/${secondTaskId}`).then((result) => result.json());
       assert.equal(secondTaskSnapshot.task.imageAssets.length, 1);
-      assert.ok(secondTaskSnapshot.task.conversation.some((entry: { author: string }) => entry.author === "user"));
+      assert.ok(
+        secondTaskSnapshot.task.conversation.some(
+          (entry: { author: string; surface?: string }) => entry.author === "user" && entry.surface === "vscode",
+        ),
+      );
 
       assert.ok(
         wsMessages.some(
