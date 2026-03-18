@@ -159,7 +159,7 @@ npm run build:extension
 - `Codex Feishu Monitor`
   - 这是以 VSCode 编辑器页形式打开的主交互面
   - 页面顶部显示 daemon 连接、账号、限流和导入入口
-  - `Tasks` 列表展示当前 bridge 已知的全部任务，已绑定飞书线程的任务会有明显的 `Feishu` 标识
+  - `Tasks` 列表展示当前 bridge 已知的全部任务，并区分 `FEISHU`、`VSCODE`、`CLI` 等启动来源与绑定标签
   - 会显示当前选中任务的消息流、审批、diff、飞书绑定信息和桌面同步开关
   - 底部有常驻输入框，适合桌面端持续接管任务
   - 本地未绑定任务支持多选后批量 `Forget Selected` 或 `Delete Selected`

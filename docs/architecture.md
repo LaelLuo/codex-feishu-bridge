@@ -31,6 +31,7 @@
 - 负责桌面图片输入和 daemon 交互
 - 主监视器通过 `Open Monitor` 命令以 Webview editor tab 打开，而不是常驻侧栏
 - 监视器页内置任务列表、Conversation、Desktop Composer，以及本地任务多选批量清理
+- 任务卡片同时显示任务启动来源标签和当前 Feishu 绑定标签，例如 `VSCODE + FEISHU`、`CLI + FEISHU`
 - 暴露 `openMonitor`、`newTask`、`resumeTask`、`importThreads`、`sendMessage`、`interruptTask`、`approve*`、`retryTurn`、`openDiff`
 - 只与本地 daemon 通信，不依赖 OpenAI VSCode 扩展私有实现
 
@@ -61,7 +62,7 @@
 ## 核心数据结构
 
 - `BridgeTask`
-  - `taskId`, `threadId`, `mode`, `title`, `workspaceRoot`, `status`, `activeTurnId`, `feishuBinding`
+  - `taskId`, `threadId`, `mode`, `taskOrigin`, `title`, `workspaceRoot`, `status`, `activeTurnId`, `feishuBinding`
 - `BridgeEvent`
   - `seq`, `taskId`, `kind`, `timestamp`, `payload`
 - `QueuedApproval`

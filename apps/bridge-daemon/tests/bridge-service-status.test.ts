@@ -263,6 +263,7 @@ describe("bridge service runtime status mapping", () => {
     assert.equal(synced.some((task) => task.taskId === "thread-running"), true);
     assert.equal(synced.some((task) => task.taskId === "thread-idle-unseen"), false);
     assert.equal(service.getTask("thread-running")?.mode, "manual-import");
+    assert.equal(service.getTask("thread-running")?.taskOrigin, "cli");
 
     await service.dispose();
     await runtime.dispose();
@@ -315,6 +316,7 @@ describe("bridge service runtime status mapping", () => {
     assert.equal(imported[0].taskId, "thread-new");
     assert.equal(service.getTask("thread-old"), null);
     assert.equal(service.getTask("thread-new")?.mode, "manual-import");
+    assert.equal(service.getTask("thread-new")?.taskOrigin, "cli");
     assert.equal(service.getTask("thread-active")?.status, "running");
 
     await service.dispose();

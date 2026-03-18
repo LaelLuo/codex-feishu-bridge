@@ -2,12 +2,18 @@ import type { BridgeTask } from "@codex-feishu-bridge/protocol";
 
 import type { ExtensionSnapshot } from "./task-model";
 
+export interface MonitorTaskBadge {
+  label: string;
+  tone: "feishu" | "vscode" | "cli" | "runtime";
+}
+
 export interface MonitorTaskListEntry {
   taskId: string;
   title: string;
   status: BridgeTask["status"];
   isSelected: boolean;
   isFeishuBound: boolean;
+  badges: MonitorTaskBadge[];
   description: string;
 }
 
@@ -31,7 +37,9 @@ export interface MonitorTaskState {
   title: string;
   status: BridgeTask["status"];
   mode: BridgeTask["mode"];
+  taskOrigin: BridgeTask["taskOrigin"];
   isFeishuBound: boolean;
+  badges: MonitorTaskBadge[];
   canForgetLocalTask: boolean;
   workspaceRoot: string;
   latestSummary?: string;
@@ -67,11 +75,37 @@ interface BuildMonitorStateOptions {
   showLocalImportedTasks?: boolean;
 }
 
+function normalizedTaskOrigin(task: Pick<BridgeTask, "mode" | "taskOrigin">): BridgeTask["taskOrigin"] {
+  return task.taskOrigin ?? (task.mode === "manual-import" ? "cli" : "runtime");
+}
+
+function taskOriginLabel(origin: BridgeTask["taskOrigin"]): string {
+  return origin.toUpperCase();
+}
+
+function taskBadges(task: BridgeTask): MonitorTaskBadge[] {
+  const badges: MonitorTaskBadge[] = [];
+  const taskOrigin = normalizedTaskOrigin(task);
+
+  if (task.feishuBinding) {
+    badges.push({
+      label: "FEISHU",
+      tone: "feishu",
+    });
+  }
+
+  if (!task.feishuBinding || taskOrigin !== "feishu") {
+    badges.push({
+      label: taskOriginLabel(taskOrigin),
+      tone: taskOrigin,
+    });
+  }
+
+  return badges;
+}
+
 function taskDescription(task: BridgeTask): string {
   const details: string[] = [];
-  if (task.feishuBinding) {
-    details.push("Feishu");
-  }
   details.push(task.status);
   const pendingApprovals = task.pendingApprovals.filter((entry) => entry.state === "pending").length;
   if (pendingApprovals > 0) {
@@ -125,6 +159,7 @@ export function buildMonitorState(
       status: task.status,
       isSelected: task.taskId === selectedTask?.taskId,
       isFeishuBound: Boolean(task.feishuBinding),
+      badges: taskBadges(task),
       description: taskDescription(task),
     })),
     selectedTask: selectedTask
@@ -133,7 +168,9 @@ export function buildMonitorState(
           title: selectedTask.title,
           status: selectedTask.status,
           mode: selectedTask.mode,
+          taskOrigin: normalizedTaskOrigin(selectedTask),
           isFeishuBound: Boolean(selectedTask.feishuBinding),
+          badges: taskBadges(selectedTask),
           canForgetLocalTask: !selectedTask.feishuBinding,
           workspaceRoot: selectedTask.workspaceRoot,
           latestSummary: selectedTask.latestSummary,

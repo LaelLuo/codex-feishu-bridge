@@ -417,6 +417,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await services.client.createTask({
         title,
         prompt: prompt ?? "",
+        source: "vscode",
       });
       await services.store.refresh();
       const latestTask = services.store.listTasks()[0];
@@ -562,6 +563,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           title: request.title,
           workspaceRoot: request.workspaceRoot,
           prompt: request.prompt,
+          source: "vscode",
         });
         await services.store.refresh();
         return services.client.getTask(task.taskId);

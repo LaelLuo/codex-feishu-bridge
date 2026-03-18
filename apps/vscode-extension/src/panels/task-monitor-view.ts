@@ -583,7 +583,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
       }
       .task-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr);
         align-items: center;
         gap: 10px;
         border: 1px solid var(--border);
@@ -608,6 +608,15 @@ export class TaskMonitorPanel implements vscode.Disposable {
       }
       .task-row .meta span {
         text-align: left;
+      }
+      .task-badges, .hero-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .hero-badges {
+        justify-content: flex-end;
       }
       .conversation {
         display: grid;
@@ -638,6 +647,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
         letter-spacing: 0.08em;
         border: 1px solid var(--border);
       }
+      .badge.cli { background: rgba(180, 83, 9, 0.14); }
       .badge.feishu { background: rgba(17, 94, 89, 0.15); }
       .badge.vscode { background: rgba(30, 64, 175, 0.12); }
       .badge.runtime { background: rgba(148, 163, 184, 0.16); }
@@ -932,9 +942,9 @@ export class TaskMonitorPanel implements vscode.Disposable {
               <button class="task-row \${task.isSelected ? "selected" : ""}" data-action="select-task" data-task-id="\${escapeHtml(task.taskId)}">
                 <div class="meta">
                   <strong>\${escapeHtml(task.title)}</strong>
+                  <div class="task-badges">\${renderBadges(task.badges)}</div>
                   <span class="muted">\${escapeHtml(task.description)}</span>
                 </div>
-                \${task.isFeishuBound ? '<span class="badge feishu">Feishu</span>' : '<span class="badge runtime">Local</span>'}
               </button>
             </div>
           \`)
@@ -1036,6 +1046,19 @@ export class TaskMonitorPanel implements vscode.Disposable {
             <div class="foldout-body">\${content}</div>
           </details>
         \`;
+      }
+
+      function renderBadges(badges) {
+        if (!Array.isArray(badges) || badges.length === 0) {
+          return "";
+        }
+
+        return badges
+          .map(
+            (badge) =>
+              \`<span class="badge \${escapeHtml(String(badge?.tone ?? "runtime"))}">\${escapeHtml(String(badge?.label ?? ""))}</span>\`,
+          )
+          .join("");
       }
 
       function composerAttachmentList() {
@@ -1145,7 +1168,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
                 <h2>\${escapeHtml(task.title)}</h2>
                 <p class="muted">\${escapeHtml(task.taskId)} · \${escapeHtml(task.status)} · \${escapeHtml(task.mode)}</p>
               </div>
-              \${task.feishuBinding ? '<span class="badge feishu">Feishu Bound</span>' : '<span class="badge runtime">Local Only</span>'}
+              <div class="hero-badges">\${renderBadges(task.badges)}</div>
             </div>
             <div class="metrics" style="margin-top: 12px;">
               <div class="metric"><strong>Workspace</strong><span>\${escapeHtml(task.workspaceRoot)}</span></div>

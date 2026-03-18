@@ -244,7 +244,11 @@ describe("bridge service message surfaces", () => {
     await service.initialize();
 
     try {
-      const created = await service.createTask({ title: "Surface task" });
+      const created = await service.createTask({
+        title: "Surface task",
+        source: "vscode",
+      });
+      assert.equal(created.taskOrigin, "vscode");
       await service.bindFeishuThread(created.taskId, {
         chatId: "oc_chat",
         threadKey: "omt_surface",
@@ -252,6 +256,7 @@ describe("bridge service message surfaces", () => {
       });
 
       const bound = service.getTask(created.taskId);
+      assert.equal(bound?.taskOrigin, "vscode");
       assert.equal(bound?.desktopReplySyncToFeishu, true);
 
       await service.sendMessage(created.taskId, {
@@ -289,6 +294,7 @@ describe("bridge service message surfaces", () => {
 
       await waitFor(() => (service.getTask(created.taskId)?.conversation.length ?? 0) >= 6, "vscode synced conversation");
       const afterVscodeSync = service.getTask(created.taskId);
+      assert.equal(afterVscodeSync?.taskOrigin, "vscode");
       assert.equal(afterVscodeSync?.desktopReplySyncToFeishu, true);
       assert.equal(afterVscodeSync?.conversation.at(-2)?.surface, "vscode");
       assert.equal(afterVscodeSync?.conversation.at(-1)?.surface, "feishu");

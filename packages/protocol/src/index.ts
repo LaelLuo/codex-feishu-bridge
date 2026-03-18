@@ -1,4 +1,5 @@
 export type TaskMode = "bridge-managed" | "manual-import";
+export type TaskOrigin = "feishu" | "vscode" | "cli" | "runtime";
 
 export type TaskStatus =
   | "idle"
@@ -99,6 +100,7 @@ export interface BridgeTask {
   taskId: string;
   threadId: string;
   mode: TaskMode;
+  taskOrigin: TaskOrigin;
   title: string;
   workspaceRoot: string;
   status: TaskStatus;
@@ -136,17 +138,20 @@ export interface BridgeTaskSeed {
   title: string;
   workspaceRoot: string;
   mode: TaskMode;
+  taskOrigin?: TaskOrigin;
   executionProfile?: TaskExecutionProfile;
   createdAt?: string;
 }
 
 export function createBridgeTask(seed: BridgeTaskSeed): BridgeTask {
   const timestamp = seed.createdAt ?? new Date().toISOString();
+  const taskOrigin = seed.taskOrigin ?? (seed.mode === "manual-import" ? "cli" : "runtime");
 
   return {
     taskId: seed.threadId,
     threadId: seed.threadId,
     mode: seed.mode,
+    taskOrigin,
     title: seed.title,
     workspaceRoot: seed.workspaceRoot,
     status: "idle",

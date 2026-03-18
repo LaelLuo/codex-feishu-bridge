@@ -141,8 +141,31 @@ function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): T
   };
 }
 
+function normalizeTaskOrigin(
+  taskOrigin: BridgeTask["taskOrigin"] | undefined,
+  mode: BridgeTask["mode"],
+): BridgeTask["taskOrigin"] {
+  if (taskOrigin) {
+    return taskOrigin;
+  }
+
+  return mode === "manual-import" ? "cli" : "runtime";
+}
+
+function taskOriginFromSource(
+  source: MessageSurface | undefined,
+  mode: BridgeTask["mode"],
+): BridgeTask["taskOrigin"] {
+  if (source === "feishu" || source === "vscode" || source === "runtime") {
+    return source;
+  }
+
+  return normalizeTaskOrigin(undefined, mode);
+}
+
 function hydratePersistedTask(task: BridgeTask): BridgeTask {
   const hydratedTask = structuredClone(task);
+  hydratedTask.taskOrigin = normalizeTaskOrigin(task.taskOrigin, task.mode);
   hydratedTask.executionProfile = normalizeExecutionProfile(task.executionProfile);
   hydratedTask.desktopReplySyncToFeishu = task.desktopReplySyncToFeishu ?? Boolean(task.feishuBinding);
   hydratedTask.feishuBindingDisabled = task.feishuBindingDisabled ?? false;
@@ -152,6 +175,7 @@ function hydratePersistedTask(task: BridgeTask): BridgeTask {
 
 function cloneTask(task: BridgeTask): BridgeTask {
   const clonedTask = structuredClone(task);
+  clonedTask.taskOrigin = normalizeTaskOrigin(clonedTask.taskOrigin, clonedTask.mode);
   clonedTask.executionProfile = normalizeExecutionProfile(clonedTask.executionProfile);
   clonedTask.desktopReplySyncToFeishu = clonedTask.desktopReplySyncToFeishu ?? Boolean(clonedTask.feishuBinding);
   hydrateTaskDiffs(clonedTask);
@@ -664,6 +688,7 @@ export class BridgeService {
     let task = this.upsertTaskFromDescriptor(descriptor, "bridge-managed");
     task.title = request.title || task.title;
     task.workspaceRoot = workspaceRoot;
+    task.taskOrigin = taskOriginFromSource(request.source, task.mode);
     task.executionProfile = normalizeExecutionProfile(request.executionProfile);
     task.desktopReplySyncToFeishu = request.replyToFeishu ?? task.desktopReplySyncToFeishu;
     this.touchTask(task);
@@ -1293,6 +1318,7 @@ export class BridgeService {
     const existing = this.tasks.get(descriptor.id);
     if (existing) {
       existing.mode = mode;
+      existing.taskOrigin = normalizeTaskOrigin(existing.taskOrigin, mode);
       existing.title = descriptor.name ?? existing.title;
       existing.workspaceRoot = descriptor.cwd ?? existing.workspaceRoot;
       existing.status = mapRuntimeStatus(descriptor.status);

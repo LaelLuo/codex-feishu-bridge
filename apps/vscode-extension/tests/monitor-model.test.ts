@@ -46,6 +46,7 @@ describe("monitor model", () => {
       createdAt: "2026-03-18T00:00:00.000Z",
     });
     task.updatedAt = "2026-03-18T00:00:03.000Z";
+    task.taskOrigin = "vscode";
     task.desktopReplySyncToFeishu = true;
     task.feishuBinding = {
       chatId: "oc_chat",
@@ -79,9 +80,49 @@ describe("monitor model", () => {
     const state = buildMonitorState(snapshot, task.taskId);
     assert.equal(state.selectedTask?.taskId, task.taskId);
     assert.equal(state.tasks[0]?.isFeishuBound, true);
-    assert.match(state.tasks[0]?.description ?? "", /Feishu/);
+    assert.deepEqual(
+      state.tasks[0]?.badges.map((badge) => badge.label),
+      ["FEISHU", "VSCODE"],
+    );
+    assert.doesNotMatch(state.tasks[0]?.description ?? "", /Feishu/i);
     assert.equal(state.selectedTask?.desktopReplySyncToFeishu, true);
+    assert.equal(state.selectedTask?.taskOrigin, "vscode");
+    assert.deepEqual(
+      state.selectedTask?.badges.map((badge) => badge.label),
+      ["FEISHU", "VSCODE"],
+    );
     assert.equal(state.selectedTask?.conversation[0]?.surface, "feishu");
+  });
+
+  it("keeps the cli badge after an imported task is later bound to feishu", () => {
+    const task = createBridgeTask({
+      threadId: "thr-imported-bound",
+      title: "Imported and bound",
+      workspaceRoot: "/tmp/workspace",
+      mode: "manual-import",
+      createdAt: "2026-03-18T00:00:00.000Z",
+    });
+    task.updatedAt = "2026-03-18T00:00:03.000Z";
+    task.feishuBinding = {
+      chatId: "oc_chat",
+      threadKey: "omt_thread",
+    };
+
+    const snapshot = {
+      ...createEmptySnapshot(),
+      connection: "connected" as const,
+      tasks: [task],
+      lastUpdatedAt: "2026-03-18T00:00:03.000Z",
+    };
+
+    const state = buildMonitorState(snapshot, task.taskId, {
+      showLocalImportedTasks: true,
+    });
+
+    assert.deepEqual(
+      state.tasks[0]?.badges.map((badge) => badge.label),
+      ["FEISHU", "CLI"],
+    );
   });
 
   it("hides local-only tasks by default and exposes them when the filter is enabled", () => {

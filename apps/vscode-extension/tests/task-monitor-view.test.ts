@@ -49,6 +49,17 @@ describe("task monitor view source", () => {
     assert.match(source, /Ctrl\/Cmd\+Enter/);
   });
 
+  it("renders task origin badges alongside feishu bindings in the monitor cards", () => {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
+    const source = readFileSync(sourcePath, "utf8");
+
+    assert.match(source, /function renderBadges\(badges\)/);
+    assert.equal(source.includes('<div class="task-badges">\\${renderBadges(task.badges)}</div>'), true);
+    assert.equal(source.includes('<div class="hero-badges">\\${renderBadges(task.badges)}</div>'), true);
+    assert.match(source, /\.badge\.cli/);
+  });
+
   it("renders the monitor as an editor panel entry point instead of a sidebar view contribution", () => {
     const currentDir = path.dirname(fileURLToPath(import.meta.url));
     const packagePath = path.resolve(currentDir, "../package.json");

@@ -20,9 +20,31 @@ describe("protocol helpers", () => {
     assert.equal(task.taskId, "thread-123");
     assert.equal(task.threadId, "thread-123");
     assert.equal(task.status, "idle");
+    assert.equal(task.taskOrigin, "runtime");
     assert.equal(task.desktopReplySyncToFeishu, false);
     assert.deepEqual(task.pendingApprovals, []);
     assert.deepEqual(task.diffs, []);
+  });
+
+  it("defaults imported tasks to the cli origin and preserves explicit origins", () => {
+    const imported = createBridgeTask({
+      threadId: "thread-imported",
+      title: "Imported task",
+      workspaceRoot: "/workspace/codex-feishu-bridge",
+      mode: "manual-import",
+      createdAt: "2026-03-17T00:00:00.000Z",
+    });
+    const vscode = createBridgeTask({
+      threadId: "thread-vscode",
+      title: "VSCode task",
+      workspaceRoot: "/workspace/codex-feishu-bridge",
+      mode: "bridge-managed",
+      taskOrigin: "vscode",
+      createdAt: "2026-03-17T00:00:00.000Z",
+    });
+
+    assert.equal(imported.taskOrigin, "cli");
+    assert.equal(vscode.taskOrigin, "vscode");
   });
 
   it("creates sequenced bridge events", () => {
