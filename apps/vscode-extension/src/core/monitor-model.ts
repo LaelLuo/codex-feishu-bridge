@@ -23,6 +23,7 @@ export interface MonitorConversationEntry {
   surface: string;
   content: string;
   createdAt: string;
+  assetIds?: string[];
 }
 
 export interface MonitorApprovalEntry {
@@ -48,6 +49,12 @@ export interface MonitorTaskState {
   desktopReplySyncToFeishu: boolean;
   feishuBinding?: BridgeTask["feishuBinding"];
   executionProfile: BridgeTask["executionProfile"];
+  assets: Array<{
+    assetId: string;
+    kind: "image" | "file";
+    displayName: string;
+    mimeType: string;
+  }>;
   conversation: MonitorConversationEntry[];
   approvals: MonitorApprovalEntry[];
   diffs: Array<{
@@ -179,12 +186,19 @@ export function buildMonitorState(
           desktopReplySyncToFeishu: selectedTask.desktopReplySyncToFeishu,
           feishuBinding: selectedTask.feishuBinding,
           executionProfile: selectedTask.executionProfile,
+          assets: (selectedTask.assets ?? []).map((asset) => ({
+            assetId: asset.assetId,
+            kind: asset.kind,
+            displayName: asset.displayName,
+            mimeType: asset.mimeType,
+          })),
           conversation: selectedTask.conversation.map((entry) => ({
             messageId: entry.messageId,
             author: entry.author,
             surface: entry.surface,
             content: entry.content,
             createdAt: entry.createdAt,
+            assetIds: entry.assetIds,
           })),
           approvals: selectedTask.pendingApprovals.map((entry) => ({
             requestId: entry.requestId,

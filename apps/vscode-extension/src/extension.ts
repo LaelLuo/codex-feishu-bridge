@@ -2,7 +2,7 @@ import * as path from "node:path";
 
 import * as vscode from "vscode";
 
-import type { BridgeTask, MessageSurface, QueuedApproval } from "@codex-feishu-bridge/protocol";
+import type { BridgeTask, MessageSurface, QueuedApproval, TaskExecutionProfile } from "@codex-feishu-bridge/protocol";
 
 import { BridgeClient } from "./core/bridge-client";
 import { diffSummaryText } from "./core/diff-summary";
@@ -25,7 +25,9 @@ interface DevCreateTaskRequest {
 interface DevSendMessageRequest {
   taskId: string;
   content: string;
+  attachmentPaths?: string[];
   imagePaths?: string[];
+  executionProfile?: TaskExecutionProfile;
   replyToFeishu?: boolean;
 }
 
@@ -65,9 +67,25 @@ function mimeTypeForPath(targetPath: string): string {
       return "image/gif";
     case ".webp":
       return "image/webp";
+    case ".pdf":
+      return "application/pdf";
+    case ".md":
+      return "text/markdown";
+    case ".txt":
+      return "text/plain";
+    case ".json":
+      return "application/json";
+    case ".csv":
+      return "text/csv";
+    case ".zip":
+      return "application/zip";
     default:
       return "application/octet-stream";
   }
+}
+
+function assetKindForPath(targetPath: string, mimeType: string): "image" | "file" {
+  return mimeType.startsWith("image/") ? "image" : "file";
 }
 
 async function pickTask(store: TaskStore, placeholder: string, predicate?: (task: BridgeTask) => boolean): Promise<BridgeTask | undefined> {
@@ -102,14 +120,14 @@ async function resolveTaskArgument(store: TaskStore, taskOrItem?: BridgeTask | T
   return taskOrItem;
 }
 
-async function uploadImages(services: ExtensionServices, task: BridgeTask): Promise<string[]> {
+async function uploadAttachments(services: ExtensionServices, task: BridgeTask): Promise<string[]> {
   const wantsAttachments = await vscode.window.showQuickPick(
     [
       { label: "No attachments", attach: false },
-      { label: "Attach images", attach: true },
+      { label: "Attach photos or files", attach: true },
     ],
     {
-      placeHolder: "Attach local images to this message?",
+      placeHolder: "Attach local photos or files to this message?",
     },
   );
 
@@ -119,10 +137,7 @@ async function uploadImages(services: ExtensionServices, task: BridgeTask): Prom
 
   const files = await vscode.window.showOpenDialog({
     canSelectMany: true,
-    openLabel: "Upload images",
-    filters: {
-      Images: ["png", "jpg", "jpeg", "gif", "webp"],
-    },
+    openLabel: "Upload photos or files",
   });
   if (!files?.length) {
     return [];
@@ -131,9 +146,11 @@ async function uploadImages(services: ExtensionServices, task: BridgeTask): Prom
   const assetIds: string[] = [];
   for (const file of files) {
     const content = await vscode.workspace.fs.readFile(file);
-    const upload = await services.client.uploadTaskImage(task.taskId, {
+    const mimeType = mimeTypeForPath(file.fsPath);
+    const upload = await services.client.uploadTaskAsset(task.taskId, {
       fileName: path.basename(file.fsPath),
-      mimeType: mimeTypeForPath(file.fsPath),
+      mimeType,
+      kind: assetKindForPath(file.fsPath, mimeType),
       contentBase64: Buffer.from(content).toString("base64"),
     });
     assetIds.push(upload.asset.assetId);
@@ -143,18 +160,20 @@ async function uploadImages(services: ExtensionServices, task: BridgeTask): Prom
   return assetIds;
 }
 
-async function uploadImagePaths(services: ExtensionServices, taskId: string, imagePaths: string[]): Promise<string[]> {
-  if (imagePaths.length === 0) {
+async function uploadAttachmentPaths(services: ExtensionServices, taskId: string, attachmentPaths: string[]): Promise<string[]> {
+  if (attachmentPaths.length === 0) {
     return [];
   }
 
   const assetIds: string[] = [];
-  for (const imagePath of imagePaths) {
-    const target = vscode.Uri.file(imagePath);
+  for (const attachmentPath of attachmentPaths) {
+    const target = vscode.Uri.file(attachmentPath);
     const content = await vscode.workspace.fs.readFile(target);
-    const upload = await services.client.uploadTaskImage(taskId, {
+    const mimeType = mimeTypeForPath(target.fsPath);
+    const upload = await services.client.uploadTaskAsset(taskId, {
       fileName: path.basename(target.fsPath),
-      mimeType: mimeTypeForPath(target.fsPath),
+      mimeType,
+      kind: assetKindForPath(target.fsPath, mimeType),
       contentBase64: Buffer.from(content).toString("base64"),
     });
     assetIds.push(upload.asset.assetId);
@@ -208,16 +227,21 @@ async function sendTaskMessage(
   taskId: string,
   payload: {
     content: string;
+    attachmentPaths?: string[];
     imagePaths?: string[];
-    imageAssetIds?: string[];
+    assetIds?: string[];
+    executionProfile?: TaskExecutionProfile;
     source?: MessageSurface;
     replyToFeishu?: boolean;
   },
 ): Promise<BridgeTask> {
-  const imageAssetIds = payload.imageAssetIds ?? (await uploadImagePaths(services, taskId, payload.imagePaths ?? []));
+  const assetIds =
+    payload.assetIds ??
+    (await uploadAttachmentPaths(services, taskId, payload.attachmentPaths ?? payload.imagePaths ?? []));
   await services.client.sendMessage(taskId, {
     content: payload.content,
-    imageAssetIds,
+    assetIds,
+    executionProfile: payload.executionProfile,
     source: payload.source,
     replyToFeishu: payload.replyToFeishu,
   });
@@ -271,7 +295,7 @@ async function withTaskMessage(
 
   await sendTaskMessage(services, task.taskId, {
     content,
-    imageAssetIds: await uploadImages(services, task),
+    assetIds: await uploadAttachments(services, task),
     source: "vscode",
     replyToFeishu: task.feishuBinding ? task.desktopReplySyncToFeishu : false,
   });
@@ -608,7 +632,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand("codexFeishuBridge.dev.sendMessage", async (request: DevSendMessageRequest) => runWithStartedStore(() =>
         sendTaskMessage(services, request.taskId, {
           content: request.content,
-          imagePaths: request.imagePaths,
+          attachmentPaths: request.attachmentPaths ?? request.imagePaths,
+          executionProfile: request.executionProfile,
           source: "vscode",
           replyToFeishu: request.replyToFeishu,
         }))),

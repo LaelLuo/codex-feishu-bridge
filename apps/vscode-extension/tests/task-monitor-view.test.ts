@@ -44,8 +44,12 @@ describe("task monitor view source", () => {
 
     assert.match(source, /foldout\("approvals"/);
     assert.match(source, /foldout\("diffs"/);
-    assert.match(source, /data-action="pick-composer-images"[\s\S]*>Attach Images<\/button>/);
+    assert.match(source, /data-action="pick-composer-attachments"[\s\S]*>Add Photos \/ Files<\/button>/);
     assert.match(source, /data-action="clear-composer"/);
+    assert.match(source, /id="composer-model"/);
+    assert.match(source, /id="composer-effort"/);
+    assert.match(source, /id="composer-plan-mode"/);
+    assert.match(source, /type: "update-execution-profile"/);
     assert.match(source, /Ctrl\/Cmd\+Enter/);
   });
 

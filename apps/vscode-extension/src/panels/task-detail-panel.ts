@@ -89,7 +89,7 @@ function renderTask(task: BridgeTask): string {
       <div><strong>Status</strong><br />${escapeHtml(task.status)}</div>
       <div><strong>Mode</strong><br />${escapeHtml(task.mode)}</div>
       <div><strong>Workspace</strong><br /><code>${escapeHtml(task.workspaceRoot)}</code></div>
-      <div><strong>Images</strong><br />${task.imageAssets.length}</div>
+      <div><strong>Attachments</strong><br />${task.assets.length}</div>
       <div><strong>Desktop Reply Sync</strong><br />${task.desktopReplySyncToFeishu}</div>
     </div>
   </section>

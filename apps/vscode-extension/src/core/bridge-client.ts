@@ -1,4 +1,4 @@
-import type { BridgeTask, MessageSurface, QueuedApproval } from "@codex-feishu-bridge/protocol";
+import type { BridgeTask, MessageSurface, QueuedApproval, ReasoningEffort, TaskAssetKind, TaskExecutionProfile } from "@codex-feishu-bridge/protocol";
 
 import type { DaemonSnapshot } from "./task-model";
 
@@ -41,36 +41,51 @@ interface CreateTaskPayload {
   title: string;
   workspaceRoot?: string;
   prompt?: string;
-  imageAssetIds?: string[];
+  assetIds?: string[];
+  executionProfile?: TaskExecutionProfile;
   source?: MessageSurface;
   replyToFeishu?: boolean;
 }
 
 interface TaskMessagePayload {
   content: string;
-  imageAssetIds?: string[];
+  assetIds?: string[];
+  executionProfile?: TaskExecutionProfile;
   source?: MessageSurface;
   replyToFeishu?: boolean;
 }
 
 interface TaskSettingsPayload {
   desktopReplySyncToFeishu?: boolean;
+  executionProfile?: TaskExecutionProfile;
 }
 
-interface UploadImagePayload {
+interface UploadAssetPayload {
   fileName: string;
   mimeType: string;
   contentBase64: string;
+  kind?: TaskAssetKind;
 }
 
 export interface UploadedAsset {
   asset: {
     assetId: string;
+    kind: TaskAssetKind;
+    displayName: string;
     localPath: string;
     mimeType: string;
     createdAt: string;
   };
   task: BridgeTask;
+}
+
+export interface ModelDescriptor {
+  id: string;
+  model: string;
+  displayName: string;
+  isDefault: boolean;
+  supportedReasoningEfforts: ReasoningEffort[];
+  defaultReasoningEffort: ReasoningEffort;
 }
 
 export function buildWebSocketUrl(baseUrl: string, wsPath: string): string {
@@ -239,11 +254,20 @@ export class BridgeClient {
     return result.task;
   }
 
-  async uploadTaskImage(taskId: string, payload: UploadImagePayload): Promise<UploadedAsset> {
+  async uploadTaskImage(taskId: string, payload: UploadAssetPayload): Promise<UploadedAsset> {
+    return this.uploadTaskAsset(taskId, payload);
+  }
+
+  async uploadTaskAsset(taskId: string, payload: UploadAssetPayload): Promise<UploadedAsset> {
     return this.requestJson<UploadedAsset>(`/tasks/${encodeURIComponent(taskId)}/uploads`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  async listModels(): Promise<ModelDescriptor[]> {
+    const result = await this.requestJson<{ models: ModelDescriptor[] }>("/models");
+    return result.models;
   }
 
   connect(onFrame: (frame: BridgeSocketFrame) => void, onClose: () => void): BridgeSocket {

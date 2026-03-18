@@ -166,7 +166,7 @@ async function run() {
     "uploaded image to appear in task state",
     async () => {
       const currentTask = await taskFromSnapshot(task.taskId);
-      return currentTask && currentTask.imageAssets.length > 0 ? currentTask : false;
+      return currentTask && currentTask.assets.length > 0 ? currentTask : false;
     },
     30000,
   );
@@ -287,7 +287,7 @@ async function run() {
     workspaceRoot,
     connection: connectedSnapshot.connection,
     initialTreeStatus: treeAfterSend.status,
-    uploadedImageCount: uploadedTask.imageAssets.length,
+    uploadedImageCount: uploadedTask.assets.length,
     diffCount: diffTask.diffs.length,
     approvalValidated: Boolean(approvalTask),
     diffPreviewLength: diffContent.length,

@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 
-import type { BridgeTask, MessageSurface, QueuedApproval } from "@codex-feishu-bridge/protocol";
+import type { BridgeTask, MessageSurface, QueuedApproval, TaskExecutionProfile } from "@codex-feishu-bridge/protocol";
 
-import { BridgeClient } from "../core/bridge-client";
+import { BridgeClient, type ModelDescriptor } from "../core/bridge-client";
 import { buildMonitorState, type MonitorViewState } from "../core/monitor-model";
 import { TaskStore } from "../core/task-store";
 
@@ -14,9 +14,10 @@ interface TaskMonitorPanelOptions {
     taskId: string,
     payload: {
       content: string;
-      imagePaths?: string[];
+      attachmentPaths?: string[];
       source?: MessageSurface;
       replyToFeishu?: boolean;
+      executionProfile?: TaskExecutionProfile;
     },
   ) => Promise<BridgeTask>;
   openStatus: () => Promise<void>;
@@ -94,13 +95,14 @@ export class TaskMonitorPanel implements vscode.Disposable {
       type?: string;
       taskId?: string;
       content?: string;
-      imagePaths?: string[];
+      attachmentPaths?: string[];
       diffPath?: string;
       requestId?: string;
       decision?: "accept" | "decline" | "cancel";
       enabled?: boolean;
       limit?: number;
       taskIds?: string[];
+      executionProfile?: TaskExecutionProfile;
     };
 
     try {
@@ -155,14 +157,15 @@ export class TaskMonitorPanel implements vscode.Disposable {
         case "send-message": {
           const task = this.getTask(payload.taskId);
           const content = payload.content?.trim();
-          if (!task || (!content && !(payload.imagePaths?.length))) {
+          if (!task || (!content && !(payload.attachmentPaths?.length))) {
             return;
           }
           await this.options.sendMessage(task.taskId, {
             content: content ?? "",
-            imagePaths: payload.imagePaths ?? [],
+            attachmentPaths: payload.attachmentPaths ?? [],
             source: "vscode",
             replyToFeishu: task.feishuBinding ? task.desktopReplySyncToFeishu : false,
+            executionProfile: payload.executionProfile,
           });
           await this.postWebviewMessage({
             type: "composer-cleared",
@@ -170,26 +173,34 @@ export class TaskMonitorPanel implements vscode.Disposable {
           });
           return;
         }
-        case "pick-composer-images": {
+        case "pick-composer-attachments": {
           const task = this.getTask(payload.taskId);
           if (!task) {
             return;
           }
           const files = await vscode.window.showOpenDialog({
             canSelectMany: true,
-            openLabel: "Attach images",
-            filters: {
-              Images: ["png", "jpg", "jpeg", "gif", "webp"],
-            },
+            openLabel: "Attach photos or files",
           });
           if (!files?.length) {
             return;
           }
           await this.postWebviewMessage({
-            type: "composer-images-selected",
+            type: "composer-attachments-selected",
             taskId: task.taskId,
-            imagePaths: files.map((file) => file.fsPath),
+            attachmentPaths: files.map((file) => file.fsPath),
           });
+          return;
+        }
+        case "update-execution-profile": {
+          const task = this.getTask(payload.taskId);
+          if (!task || !payload.executionProfile) {
+            return;
+          }
+          await this.options.client.updateTaskSettings(task.taskId, {
+            executionProfile: payload.executionProfile,
+          });
+          await this.options.store.refresh();
           return;
         }
         case "interrupt": {
@@ -394,6 +405,12 @@ export class TaskMonitorPanel implements vscode.Disposable {
     const state = buildMonitorState(this.options.store.getSnapshot(), this.selectedTaskId, {
       showLocalImportedTasks: this.showLocalImportedTasks,
     });
+    let models: ModelDescriptor[] = [];
+    try {
+      models = await this.options.client.listModels();
+    } catch {
+      models = [];
+    }
     if (state.selectedTaskId !== this.selectedTaskId) {
       this.selectedTaskId = state.selectedTaskId;
       await this.options.context.workspaceState.update(TaskMonitorPanel.selectedTaskStorageKey, this.selectedTaskId);
@@ -401,7 +418,10 @@ export class TaskMonitorPanel implements vscode.Disposable {
     this.panel.title = state.selectedTask ? `Codex: ${state.selectedTask.title}` : TaskMonitorPanel.panelTitle;
     await this.panel.webview.postMessage({
       type: "state",
-      state,
+      state: {
+        ...state,
+        models,
+      },
       focusComposer: this.focusComposerOnNextState,
     });
     this.focusComposerOnNextState = false;
@@ -807,9 +827,11 @@ export class TaskMonitorPanel implements vscode.Disposable {
         selectedTaskId: undefined,
         account: null,
         rateLimits: null,
+        models: [],
       };
       let composerDrafts = {};
-      let composerImagePaths = {};
+      let composerAttachmentPaths = {};
+      let composerExecutionProfiles = {};
       let importRecentLimit = 8;
       let sectionState = {
         approvals: false,
@@ -876,16 +898,47 @@ export class TaskMonitorPanel implements vscode.Disposable {
         composerDrafts[taskId] = value;
       }
 
-      function currentComposerImagePaths() {
-        const taskId = currentTaskId();
-        return taskId ? (composerImagePaths[taskId] ?? []) : [];
+      function defaultComposerExecutionProfile() {
+        const selectedProfile = state.selectedTask?.executionProfile ?? {};
+        return {
+          model: selectedProfile.model ?? "",
+          effort: selectedProfile.effort ?? "",
+          planMode: Boolean(selectedProfile.planMode),
+        };
       }
 
-      function setComposerImagePaths(taskId, imagePaths) {
+      function currentComposerExecutionProfile() {
+        const taskId = currentTaskId();
+        if (!taskId) {
+          return defaultComposerExecutionProfile();
+        }
+        if (!composerExecutionProfiles[taskId]) {
+          composerExecutionProfiles[taskId] = defaultComposerExecutionProfile();
+        }
+        return composerExecutionProfiles[taskId];
+      }
+
+      function setCurrentComposerExecutionProfile(nextProfile) {
+        const taskId = currentTaskId();
         if (!taskId) {
           return;
         }
-        composerImagePaths[taskId] = [...new Set(imagePaths)];
+        composerExecutionProfiles[taskId] = {
+          ...currentComposerExecutionProfile(),
+          ...nextProfile,
+        };
+      }
+
+      function currentComposerAttachmentPaths() {
+        const taskId = currentTaskId();
+        return taskId ? (composerAttachmentPaths[taskId] ?? []) : [];
+      }
+
+      function setComposerAttachmentPaths(taskId, attachmentPaths) {
+        if (!taskId) {
+          return;
+        }
+        composerAttachmentPaths[taskId] = [...new Set(attachmentPaths)];
       }
 
       function clearComposerState(taskId) {
@@ -893,12 +946,39 @@ export class TaskMonitorPanel implements vscode.Disposable {
           return;
         }
         composerDrafts[taskId] = "";
-        composerImagePaths[taskId] = [];
+        composerAttachmentPaths[taskId] = [];
       }
 
       function fileNameFromPath(targetPath) {
         const segments = String(targetPath ?? "").split(/[\\\\/]/);
         return segments[segments.length - 1] || targetPath;
+      }
+
+      function selectedModelDescriptor() {
+        const profile = currentComposerExecutionProfile();
+        return (state.models ?? []).find((model) => model.id === profile.model || model.model === profile.model) ?? null;
+      }
+
+      function currentEffortOptions() {
+        const model = selectedModelDescriptor();
+        if (!model) {
+          return ["none", "minimal", "low", "medium", "high", "xhigh"];
+        }
+        return model.supportedReasoningEfforts ?? [];
+      }
+
+      function countAttachmentKinds(paths) {
+        let imageCount = 0;
+        let fileCount = 0;
+        for (const targetPath of paths) {
+          const extension = fileNameFromPath(targetPath).toLowerCase();
+          if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(extension)) {
+            imageCount += 1;
+          } else {
+            fileCount += 1;
+          }
+        }
+        return { imageCount, fileCount };
       }
 
       function formatLastUpdatedAt() {
@@ -1045,6 +1125,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
                 <span class="muted">\${escapeHtml(new Date(message.createdAt).toLocaleString())}</span>
               </header>
               \${pre(message.content)}
+              \${messageAttachmentList(message)}
             </article>
           \`)
           .join("");
@@ -1124,14 +1205,34 @@ export class TaskMonitorPanel implements vscode.Disposable {
           .join("");
       }
 
-      function composerAttachmentList() {
-        const imagePaths = currentComposerImagePaths();
-        if (!imagePaths.length) {
-          return '<span class="muted">No local images attached.</span>';
+      function taskAssetById(assetId) {
+        return (state.selectedTask?.assets ?? []).find((asset) => asset.assetId === assetId) ?? null;
+      }
+
+      function messageAttachmentList(message) {
+        if (!Array.isArray(message.assetIds) || message.assetIds.length === 0) {
+          return "";
         }
 
-        return imagePaths
-          .map((imagePath) => \`<span class="composer-chip">\${escapeHtml(fileNameFromPath(imagePath))}</span>\`)
+        return \`<div class="composer-attachments">\${message.assetIds
+          .map((assetId) => {
+            const asset = taskAssetById(assetId);
+            if (!asset) {
+              return "";
+            }
+            return \`<span class="composer-chip">\${escapeHtml(asset.kind === "image" ? "Photo" : "File")} · \${escapeHtml(asset.displayName)}</span>\`;
+          })
+          .join("")}</div>\`;
+      }
+
+      function composerAttachmentList() {
+        const attachmentPaths = currentComposerAttachmentPaths();
+        if (!attachmentPaths.length) {
+          return '<span class="muted">No local photos or files attached.</span>';
+        }
+
+        return attachmentPaths
+          .map((attachmentPath) => \`<span class="composer-chip">\${escapeHtml(fileNameFromPath(attachmentPath))}</span>\`)
           .join("");
       }
 
@@ -1204,6 +1305,40 @@ export class TaskMonitorPanel implements vscode.Disposable {
         return lines.join("\\n") || "Available";
       }
 
+      function modelSelectOptionsHtml() {
+        const currentModel = currentComposerExecutionProfile().model ?? "";
+        const options = [
+          \`<option value="">Runtime default</option>\`,
+          ...(state.models ?? []).map((model) => \`<option value="\${escapeHtml(model.id)}" \${model.id === currentModel ? "selected" : ""}>\${escapeHtml(model.id)}</option>\`),
+        ];
+        return options.join("");
+      }
+
+      function effortSelectOptionsHtml() {
+        const currentEffort = currentComposerExecutionProfile().effort ?? "";
+        const options = [
+          \`<option value="">Model default</option>\`,
+          ...currentEffortOptions().map((effort) => \`<option value="\${escapeHtml(effort)}" \${effort === currentEffort ? "selected" : ""}>\${escapeHtml(effort)}</option>\`),
+        ];
+        return options.join("");
+      }
+
+      function attachmentSummaryText() {
+        const attachments = currentComposerAttachmentPaths();
+        if (!attachments.length) {
+          return "No attachments selected.";
+        }
+        const counts = countAttachmentKinds(attachments);
+        const parts = [];
+        if (counts.imageCount > 0) {
+          parts.push(String(counts.imageCount) + " photo(s)");
+        }
+        if (counts.fileCount > 0) {
+          parts.push(String(counts.fileCount) + " file(s)");
+        }
+        return parts.join(" · ");
+      }
+
       function emptySelectionHint() {
         if (!state.showLocalImportedTasks && state.hiddenTaskCount > 0) {
           return "Only Feishu-bound tasks are currently shown. Turn on Show local imported tasks if you want to inspect imported host threads.";
@@ -1264,18 +1399,32 @@ export class TaskMonitorPanel implements vscode.Disposable {
             <div class="eyebrow" style="margin-top: 14px;">Desktop Composer</div>
             <div class="composer-shell">
               <div class="composer-toolbar">
-                <span class="muted">Task-scoped draft, local image attachments, and <code>Ctrl/Cmd+Enter</code> to send.</span>
+                <span class="muted">Task-scoped draft with model, reasoning, plan mode, and local photo/file attachments. <code>Ctrl/Cmd+Enter</code> sends.</span>
                 <div class="composer-actions">
-                  <button data-action="pick-composer-images" title="Attach local images from this computer to the next desktop-side message.">Attach Images</button>
-                  <button data-action="clear-composer" title="Clear the current draft text and attached images for this task." \${currentComposerDraft() || currentComposerImagePaths().length ? "" : "disabled"}>Clear Draft</button>
+                  <button data-action="pick-composer-attachments" title="Attach local photos or files from this computer to the next desktop-side message.">Add Photos / Files</button>
+                  <button data-action="clear-composer" title="Clear the current draft text and attached files for this task." \${currentComposerDraft() || currentComposerAttachmentPaths().length ? "" : "disabled"}>Clear Draft</button>
                   <button class="primary" data-action="send-message" title="Send the current desktop message into this Codex task.">Send Message</button>
                 </div>
+              </div>
+              <div class="actions" style="margin-bottom: 10px;">
+                <label class="toggle" title="Choose which model the next turns on this task should use.">
+                  <span class="muted">Model</span>
+                  <select id="composer-model">\${modelSelectOptionsHtml()}</select>
+                </label>
+                <label class="toggle" title="Choose the reasoning effort for upcoming turns on this task.">
+                  <span class="muted">Reasoning</span>
+                  <select id="composer-effort">\${effortSelectOptionsHtml()}</select>
+                </label>
+                <label class="toggle" title="When enabled, ask Codex to run the next turn in plan mode before implementation.">
+                  <input id="composer-plan-mode" type="checkbox" \${currentComposerExecutionProfile().planMode ? "checked" : ""} />
+                  <span>Plan Mode</span>
+                </label>
               </div>
               <div class="composer-attachments">\${composerAttachmentList()}</div>
               <textarea id="composer" placeholder="Type here to continue the selected task from VSCode. Shift+Enter for newline, Ctrl/Cmd+Enter to send.">\${escapeHtml(currentComposerDraft())}</textarea>
               <div class="composer-footer">
                 <span class="muted">Desktop messages are tagged as <code>vscode</code>. User text is not mirrored into Feishu.</span>
-                <span class="muted">\${currentComposerImagePaths().length ? escapeHtml(String(currentComposerImagePaths().length)) + " image(s) attached" : "No attachments selected."}</span>
+                <span class="muted">\${escapeHtml(attachmentSummaryText())}</span>
               </div>
             </div>
           </section>
@@ -1344,6 +1493,75 @@ export class TaskMonitorPanel implements vscode.Disposable {
           });
         }
 
+        const composerModel = document.getElementById("composer-model");
+        if (composerModel instanceof HTMLSelectElement) {
+          composerModel.addEventListener("change", (event) => {
+            const selectedModel = event.target.value || "";
+            const descriptor = (state.models ?? []).find((model) => model.id === selectedModel || model.model === selectedModel) ?? null;
+            const nextProfile = {
+              ...currentComposerExecutionProfile(),
+              model: selectedModel,
+            };
+            if (descriptor && nextProfile.effort && !descriptor.supportedReasoningEfforts.includes(nextProfile.effort)) {
+              nextProfile.effort = descriptor.defaultReasoningEffort;
+            }
+            if (!selectedModel) {
+              nextProfile.effort = currentComposerExecutionProfile().effort ?? "";
+            }
+            setCurrentComposerExecutionProfile(nextProfile);
+            render();
+            vscode.postMessage({
+              type: "update-execution-profile",
+              taskId: currentTaskId(),
+              executionProfile: {
+                ...(nextProfile.model ? { model: nextProfile.model } : {}),
+                ...(nextProfile.effort ? { effort: nextProfile.effort } : {}),
+                ...(nextProfile.planMode ? { planMode: true } : {}),
+              },
+            });
+          });
+        }
+
+        const composerEffort = document.getElementById("composer-effort");
+        if (composerEffort instanceof HTMLSelectElement) {
+          composerEffort.addEventListener("change", (event) => {
+            const nextProfile = {
+              ...currentComposerExecutionProfile(),
+              effort: event.target.value || "",
+            };
+            setCurrentComposerExecutionProfile(nextProfile);
+            vscode.postMessage({
+              type: "update-execution-profile",
+              taskId: currentTaskId(),
+              executionProfile: {
+                ...(nextProfile.model ? { model: nextProfile.model } : {}),
+                ...(nextProfile.effort ? { effort: nextProfile.effort } : {}),
+                ...(nextProfile.planMode ? { planMode: true } : {}),
+              },
+            });
+          });
+        }
+
+        const composerPlanMode = document.getElementById("composer-plan-mode");
+        if (composerPlanMode instanceof HTMLInputElement) {
+          composerPlanMode.addEventListener("change", (event) => {
+            const nextProfile = {
+              ...currentComposerExecutionProfile(),
+              planMode: Boolean(event.target.checked),
+            };
+            setCurrentComposerExecutionProfile(nextProfile);
+            vscode.postMessage({
+              type: "update-execution-profile",
+              taskId: currentTaskId(),
+              executionProfile: {
+                ...(nextProfile.model ? { model: nextProfile.model } : {}),
+                ...(nextProfile.effort ? { effort: nextProfile.effort } : {}),
+                ...(nextProfile.planMode ? { planMode: true } : {}),
+              },
+            });
+          });
+        }
+
         const importLimitInput = document.getElementById("import-limit");
         if (importLimitInput instanceof HTMLInputElement) {
           importLimitInput.addEventListener("input", (event) => {
@@ -1376,13 +1594,13 @@ export class TaskMonitorPanel implements vscode.Disposable {
       }
 
       window.addEventListener("message", (event) => {
-        if (event.data?.type === "composer-images-selected") {
+        if (event.data?.type === "composer-attachments-selected") {
           const taskId = event.data.taskId;
-          if (!taskId || !Array.isArray(event.data.imagePaths)) {
+          if (!taskId || !Array.isArray(event.data.attachmentPaths)) {
             return;
           }
-          const existing = composerImagePaths[taskId] ?? [];
-          setComposerImagePaths(taskId, [...existing, ...event.data.imagePaths]);
+          const existing = composerAttachmentPaths[taskId] ?? [];
+          setComposerAttachmentPaths(taskId, [...existing, ...event.data.attachmentPaths]);
           render();
           return;
         }
@@ -1397,6 +1615,9 @@ export class TaskMonitorPanel implements vscode.Disposable {
           return;
         }
         state = event.data.state;
+        if (state.selectedTask?.taskId && !composerExecutionProfiles[state.selectedTask.taskId]) {
+          composerExecutionProfiles[state.selectedTask.taskId] = defaultComposerExecutionProfile();
+        }
         trimSelectedLocalTasks();
         render();
         if (event.data.focusComposer) {
@@ -1455,11 +1676,11 @@ export class TaskMonitorPanel implements vscode.Disposable {
           case "open-status":
             vscode.postMessage({ type: "open-status" });
             return;
-          case "pick-composer-images":
+          case "pick-composer-attachments":
             if (!taskId) {
               return;
             }
-            vscode.postMessage({ type: "pick-composer-images", taskId });
+            vscode.postMessage({ type: "pick-composer-attachments", taskId });
             return;
           case "clear-composer":
             if (!taskId) {
@@ -1471,11 +1692,22 @@ export class TaskMonitorPanel implements vscode.Disposable {
           case "send-message": {
             const composer = document.getElementById("composer");
             const content = composer instanceof HTMLTextAreaElement ? composer.value.trim() : "";
-            const imagePaths = taskId ? currentComposerImagePaths() : [];
-            if ((!content && imagePaths.length === 0) || !taskId) {
+            const attachmentPaths = taskId ? currentComposerAttachmentPaths() : [];
+            const executionProfile = currentComposerExecutionProfile();
+            if ((!content && attachmentPaths.length === 0) || !taskId) {
               return;
             }
-            vscode.postMessage({ type: "send-message", taskId, content, imagePaths });
+            vscode.postMessage({
+              type: "send-message",
+              taskId,
+              content,
+              attachmentPaths,
+              executionProfile: {
+                ...(executionProfile.model ? { model: executionProfile.model } : {}),
+                ...(executionProfile.effort ? { effort: executionProfile.effort } : {}),
+                ...(executionProfile.planMode ? { planMode: true } : {}),
+              },
+            });
             return;
           }
           case "interrupt":
