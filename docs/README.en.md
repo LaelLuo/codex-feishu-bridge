@@ -124,6 +124,27 @@ CODEX_RUNTIME_BACKEND=stdio
 CODEX_APP_SERVER_BIN=/opt/host-codex-bin/bin/codex.js
 ```
 
+If your main goal is "import a host CLI thread, bind it to Feishu, and still keep the original host file visibility for later turns", prefer:
+
+```bash
+HOST_CODEX_HOME=/home/you/.codex
+HOST_CODEX_BIN_DIR=/path/to/codex-package
+CODEX_RUNTIME_BACKEND=socket-proxy
+CODEX_RUNTIME_PROXY_SOCKET=/workspace/codex-feishu-bridge/.tmp/codex-runtime-proxy.sock
+```
+
+This mode does not move the whole `bridge-daemon` onto the host. It keeps:
+
+- `bridge-daemon`, Feishu, and HTTP/WebSocket inside Docker
+- only the real `codex app-server` execution layer exposed through a thin host-side sidecar
+- `./scripts/dev-stack.sh up` and `./scripts/dev-stack.sh monitor` auto-managing that sidecar for you
+
+Use it when:
+
+- you started a full-access thread in the host CLI first
+- later imported that thread into bridge and bound it to Feishu
+- you want later Feishu or VSCode turns to keep seeing the real host paths instead of the Docker-limited filesystem view
+
 Then start the runtime and verify the auth endpoints:
 
 ```bash
@@ -328,6 +349,7 @@ Slash commands remain available as compatibility fallbacks, but card interaction
 - The daemon now exposes `/tasks`, `/tasks/import`, `/tasks/:id/resume`, `/tasks/:id/messages`, `/tasks/:id/uploads`, `/tasks/:id/approvals/*`, and `/feishu/webhook`.
 - The daemon persists task state under `.tmp/` and reconciles recovered tasks on restart.
 - Live runtime validation should prefer `CODEX_RUNTIME_BACKEND=stdio` so the daemon manages the real `codex app-server` process directly.
+- For imported host threads that must keep host path visibility after Feishu binding, prefer `CODEX_RUNTIME_BACKEND=socket-proxy`.
 - Reusing a host login state in Docker uses `HOST_CODEX_HOME -> /codex-home`.
 - Reusing a host Codex executable in Docker uses `HOST_CODEX_BIN_DIR -> /opt/host-codex-bin`.
 - `npm run validate:runtime` is read-only by default.

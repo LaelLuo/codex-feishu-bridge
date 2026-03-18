@@ -16,11 +16,14 @@
 - 共享的 Codex home 用于保存登录态和线程存储
 - Live validation can mount a host Codex binary directory into `/opt/host-codex-bin`
 - Live validation can mount a host Codex home into `/codex-home` to reuse an existing ChatGPT login state
+- 当 `CODEX_RUNTIME_BACKEND=socket-proxy` 时，真正执行任务的 `codex app-server` 由一个宿主机 sidecar 托管，并通过项目 `.tmp/` 下的 Unix socket 暴露给容器内 daemon
+- 这个 socket-proxy 模式用于 imported host threads：绑定 Feishu 后仍保留宿主机原始文件视野，而不需要把整个 daemon 裸跑到宿主机
 
 ### Bridge Daemon
 
 - 容器内常驻服务
-- 负责 `codex app-server` 子进程管理
+- 在默认 `stdio` 模式下直接管理 `codex app-server` 子进程
+- 在 `socket-proxy` 模式下改为连接宿主机 sidecar 暴露的 Unix socket，但 Feishu、HTTP、WebSocket、状态持久化仍然留在容器里
 - 负责任务镜像、事件广播、审批状态机、uploads、Feishu 路由
 - 负责状态文件持久化、重启恢复对账、过期审批清理
 - 对外暴露 localhost HTTP 和 WebSocket
@@ -127,6 +130,7 @@
 
 - 根脚本 `scripts/bridge-cli.mjs` 提供 `list`、`import`、`resume`、`send`
 - 根脚本 `scripts/dev-stack.sh` 提供 `up`、`monitor`、`down`、`status`、`logs` 的一键开发环境启动入口
+- 当 `CODEX_RUNTIME_BACKEND=socket-proxy` 时，`scripts/dev-stack.sh up` / `monitor` 会先在宿主机启动一个薄的 `codex app-server` socket proxy，再拉起容器内 `bridge-runtime`
 - 在 `workspace-dev` 容器里使用时，daemon 地址默认应设为 `BRIDGE_BASE_URL=http://bridge-runtime:8787`
 
 ## Optional Coordination Utilities
@@ -142,6 +146,7 @@
 - `bridge-runtime` mounts a shared Codex home path and an uploads directory
 - `bridge-runtime` can also mount `${HOST_CODEX_HOME}` to `/codex-home` and `${HOST_CODEX_BIN_DIR}` to `/opt/host-codex-bin`
 - Live `stdio` validation should set `BRIDGE_CODEX_HOME=/codex-home`, `CODEX_RUNTIME_BACKEND=stdio`, and `CODEX_APP_SERVER_BIN=/opt/host-codex-bin/bin/codex.js`
+- `socket-proxy` validation should keep `bridge-daemon` in Docker, set `CODEX_RUNTIME_BACKEND=socket-proxy`, and let the host sidecar expose `codex app-server` through `.tmp/codex-runtime-proxy.sock`
 - Host-native Node and TypeScript are optional; container is the default path
 
 ## 代码规范
