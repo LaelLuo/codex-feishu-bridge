@@ -7,6 +7,7 @@ compose_file="${repo_root}/docker/compose.yaml"
 env_example="${repo_root}/docker/.env.example"
 env_file="${repo_root}/docker/.env"
 workspace_dir="/workspace/codex-feishu-bridge"
+extension_dev_path="${repo_root}/apps/vscode-extension"
 command="${1:-up}"
 
 compose() {
@@ -44,6 +45,28 @@ hash_file() {
   fi
 
   shasum -a 256 "$1" | awk '{print $1}'
+}
+
+resolve_code_bin() {
+  if [[ -n "${CODEX_FEISHU_BRIDGE_CODE_BIN:-}" ]]; then
+    if command -v "${CODEX_FEISHU_BRIDGE_CODE_BIN}" >/dev/null 2>&1; then
+      echo "${CODEX_FEISHU_BRIDGE_CODE_BIN}"
+      return
+    fi
+
+    echo "Configured CODEX_FEISHU_BRIDGE_CODE_BIN was not found: ${CODEX_FEISHU_BRIDGE_CODE_BIN}" >&2
+    exit 1
+  fi
+
+  local candidate
+  for candidate in code code-insiders; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      echo "${candidate}"
+      return
+    fi
+  done
+
+  echo "" 
 }
 
 start_workspace_dev() {
@@ -139,6 +162,28 @@ print_summary() {
 EOF
 }
 
+open_monitor() {
+  local code_bin
+  code_bin="$(resolve_code_bin)"
+
+  if [[ -z "${code_bin}" ]]; then
+    echo "VSCode CLI was not found. Install the 'code' command or set CODEX_FEISHU_BRIDGE_CODE_BIN." >&2
+    exit 1
+  fi
+
+  echo "[setup] Launching monitor through ${code_bin}..."
+  (
+    cd "${repo_root}"
+    CODEX_FEISHU_BRIDGE_AUTO_OPEN_MONITOR=1 \
+      "${code_bin}" \
+      --new-window \
+      "${repo_root}" \
+      --extensionDevelopmentPath="${extension_dev_path}" \
+      --disable-extensions >/dev/null 2>&1
+  ) &
+  disown || true
+}
+
 command_up() {
   require_docker
   ensure_env_file
@@ -149,6 +194,11 @@ command_up() {
   start_runtime
   wait_for_health
   print_summary
+}
+
+command_monitor() {
+  command_up
+  open_monitor
 }
 
 command_down() {
@@ -195,8 +245,11 @@ case "${command}" in
   logs)
     command_logs
     ;;
+  monitor)
+    command_monitor
+    ;;
   *)
-    echo "Usage: scripts/dev-stack.sh [up|down|status|logs]" >&2
+    echo "Usage: scripts/dev-stack.sh [up|down|status|logs|monitor]" >&2
     exit 1
     ;;
 esac

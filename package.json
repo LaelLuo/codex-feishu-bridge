@@ -13,6 +13,7 @@
   },
   "scripts": {
     "start:all": "bash ./scripts/dev-stack.sh up",
+    "monitor:all": "bash ./scripts/dev-stack.sh monitor",
     "stop:all": "bash ./scripts/dev-stack.sh down",
     "status:all": "bash ./scripts/dev-stack.sh status",
     "logs:all": "bash ./scripts/dev-stack.sh logs",
