@@ -541,7 +541,7 @@ export class BridgeService {
   async syncRuntimeThreads(): Promise<BridgeTask[]> {
     try {
       const runtimeThreads = await this.options.runtime.listThreads();
-      const changed = this.applyRuntimeThreads(runtimeThreads, {
+      const changed = await this.applyRuntimeThreads(runtimeThreads, {
         importNewActiveOnly: true,
       });
       if (changed) {
@@ -1281,7 +1281,7 @@ export class BridgeService {
   private async reconcilePersistedTasks(): Promise<void> {
     try {
       const runtimeThreads = await this.options.runtime.listThreads();
-      const changed = this.applyRuntimeThreads(runtimeThreads, {
+      const changed = await this.applyRuntimeThreads(runtimeThreads, {
         importNewActiveOnly: true,
       });
       if (changed) {
@@ -1292,12 +1292,12 @@ export class BridgeService {
     }
   }
 
-  private applyRuntimeThreads(
+  private async applyRuntimeThreads(
     runtimeThreads: CodexThreadDescriptor[],
     options: {
       importNewActiveOnly: boolean;
     },
-  ): boolean {
+  ): Promise<boolean> {
     const runtimeThreadsById = new Map(runtimeThreads.map((thread) => [thread.id, thread]));
     let changed = false;
 
@@ -1332,6 +1332,7 @@ export class BridgeService {
       }
       if (task.updatedAt !== nextUpdatedAt) {
         changed = true;
+        changed = (await this.refreshImportedTaskConversation(task)) || changed;
       }
       if (nextStatus === "idle" || nextStatus === "completed" || nextStatus === "failed" || nextStatus === "interrupted") {
         if (task.activeTurnId) {
@@ -1519,36 +1520,82 @@ export class BridgeService {
       return;
     }
 
+    await this.refreshImportedTaskConversation(task);
+  }
+
+  private async refreshImportedTaskConversation(task: BridgeTask): Promise<boolean> {
+    if (!this.canRefreshImportedTaskConversation(task)) {
+      return false;
+    }
+
     try {
       const rolloutPath = await this.findThreadRolloutPath(task.threadId);
       if (!rolloutPath || !existsSync(rolloutPath)) {
-        return;
+        return false;
       }
 
       const messages = await this.readConversationFromRollout(rolloutPath);
       if (messages.length === 0) {
-        return;
+        return false;
       }
 
-      task.conversation = messages.map((message, index) => ({
+      const nextConversation: ConversationMessage[] = messages.map((message, index) => ({
         messageId: `${task.threadId}:imported:${index}`,
         author: message.author,
         surface: "runtime",
         content: message.content,
         createdAt: message.createdAt,
       }));
-      const latestAgentMessage = [...task.conversation].reverse().find((entry) => entry.author === "agent");
+      if (!this.hasImportedConversationChanged(task.conversation, nextConversation)) {
+        return false;
+      }
+
+      task.conversation = nextConversation;
+      const latestAgentMessage = [...nextConversation].reverse().find((entry) => entry.author === "agent");
       if (latestAgentMessage) {
         task.latestSummary = latestAgentMessage.content;
         hydrateTaskDiffs(task);
       }
+      return true;
     } catch (error) {
       this.options.logger.warn("failed to hydrate imported task conversation", {
         taskId: task.taskId,
         threadId: task.threadId,
         error,
       });
+      return false;
     }
+  }
+
+  private canRefreshImportedTaskConversation(task: BridgeTask): boolean {
+    if (task.mode !== "manual-import") {
+      return false;
+    }
+
+    if (task.conversation.length === 0) {
+      return true;
+    }
+
+    return task.conversation.every((entry) => entry.messageId.startsWith(`${task.threadId}:imported:`));
+  }
+
+  private hasImportedConversationChanged(
+    currentConversation: ConversationMessage[],
+    nextConversation: ConversationMessage[],
+  ): boolean {
+    if (currentConversation.length !== nextConversation.length) {
+      return true;
+    }
+
+    return currentConversation.some((entry, index) => {
+      const nextEntry = nextConversation[index];
+      return !nextEntry ||
+        entry.messageId !== nextEntry.messageId ||
+        entry.author !== nextEntry.author ||
+        entry.surface !== nextEntry.surface ||
+        entry.content !== nextEntry.content ||
+        entry.createdAt !== nextEntry.createdAt;
+    });
   }
 
   private async readConversationFromRollout(rolloutPath: string): Promise<RolloutConversationSeed[]> {
