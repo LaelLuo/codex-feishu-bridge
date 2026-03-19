@@ -72,7 +72,9 @@ describe("task monitor view source", () => {
     assert.match(source, /View Status<\/button>/);
     assert.match(source, /Stop Turn<\/button>/);
     assert.match(source, /Retry Last Turn<\/button>/);
+    assert.match(source, /Rename Task<\/button>/);
     assert.match(source, /title="Create a new topic in the default Feishu group and bind this task to it for mobile follow-up\."/);
+    assert.match(source, /title="Rename the shared task title here and in any bound Feishu thread\."/);
     assert.match(source, /title="Re-fetch the current daemon snapshot and any host-thread updates\."/);
     assert.match(source, /data-action="toggle-feishu-running-mode"/);
     assert.match(source, /Queue Feishu messages while Codex is already running/);
@@ -83,9 +85,27 @@ describe("task monitor view source", () => {
     assert.match(source, /function postPendingButtonMessage\(button, message\)/);
     assert.match(source, /type: "action-finished"/);
     assert.match(source, /case "open-status":\s*postPendingButtonMessage\(target, \{ type: "open-status" \}\);\s*return;/s);
+    assert.match(source, /case "rename-task":[\s\S]*postPendingButtonMessage\(target, \{ type: action, taskId \}\);\s*return;/s);
     assert.match(source, /case "pick-composer-attachments":[\s\S]*postPendingButtonMessage\(target, \{ type: "pick-composer-attachments", taskId \}\);\s*return;/s);
     assert.match(source, /case "open-diff":[\s\S]*postPendingButtonMessage\(target, \{\s*type: "open-diff"/s);
     assert.match(source, /type: "composer-attachments-selected"[\s\S]*pendingRequestId: payload\.pendingRequestId/s);
+  });
+
+  it("routes task renames through the extension host input box and bridge title endpoint", () => {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const sourcePath = path.resolve(currentDir, "../src/panels/task-monitor-view.ts");
+    const clientPath = path.resolve(currentDir, "../src/core/bridge-client.ts");
+    const source = readFileSync(sourcePath, "utf8");
+    const clientSource = readFileSync(clientPath, "utf8");
+
+    assert.match(source, /case "rename-task":/);
+    assert.match(source, /showInputBox\(\{/);
+    assert.match(source, /title: "Rename Task"/);
+    assert.match(source, /prompt: "Update the shared task title for the monitor and any bound Feishu thread\."/);
+    assert.match(source, /this\.options\.client\.renameTask\(task\.taskId, \{/);
+    assert.match(source, /source: "vscode"/);
+    assert.match(clientSource, /async renameTask\(taskId: string, payload: TaskRenamePayload\): Promise<BridgeTask>/);
+    assert.match(clientSource, /\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/title/);
   });
 
   it("renders task origin badges alongside feishu bindings in the monitor cards", () => {

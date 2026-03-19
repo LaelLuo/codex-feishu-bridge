@@ -120,6 +120,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
       feishuRunningMessageMode?: "steer" | "queue";
       limit?: number;
       taskIds?: string[];
+      title?: string;
       executionProfile?: TaskExecutionProfile;
     };
 
@@ -290,6 +291,29 @@ export class TaskMonitorPanel implements vscode.Disposable {
           await this.options.store.refresh();
           actionSucceeded = true;
           await vscode.window.showInformationMessage("Created a new Feishu topic and bound this task.");
+          return;
+        }
+        case "rename-task": {
+          const task = this.getTask(payload.taskId);
+          if (!task) {
+            return;
+          }
+          const nextTitle = await vscode.window.showInputBox({
+            title: "Rename Task",
+            prompt: "Update the shared task title for the monitor and any bound Feishu thread.",
+            value: task.title,
+            ignoreFocusOut: true,
+            validateInput: (value) => (value.trim() ? undefined : "Task title cannot be empty."),
+          });
+          if (nextTitle === undefined) {
+            return;
+          }
+          await this.options.client.renameTask(task.taskId, {
+            title: nextTitle.trim(),
+            source: "vscode",
+          });
+          actionSucceeded = true;
+          await this.options.store.refresh();
           return;
         }
         case "resolve-approval": {
@@ -1807,6 +1831,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
                 <button data-action="open-status" title="Open the bridge status page for daemon health, account, and runtime limits.">View Status</button>
                 <button class="danger" data-action="interrupt" title="Stop the task's active Codex turn as soon as the runtime accepts the interrupt.">Stop Turn</button>
                 <button data-action="retry" title="Ask Codex to retry the last turn and keep working on the same task.">Retry Last Turn</button>
+                <button data-action="rename-task" title="Rename the shared task title here and in any bound Feishu thread.">Rename Task</button>
                 <button \${task.feishuBinding ? "disabled" : ""} data-action="bind-new-feishu-topic" title="Create a new topic in the default Feishu group and bind this task to it for mobile follow-up.">Bind to New Feishu Topic</button>
                 <button \${task.feishuBinding ? "" : "disabled"} data-action="unbind" title="Detach this task from its current Feishu thread without deleting local task data.">Unbind Feishu</button>
                 <button \${task.canForgetLocalTask ? "" : "disabled"} data-action="forget-local-task" title="Remove this task from the monitor but keep the underlying Codex thread on disk.">Remove From Monitor</button>
@@ -2141,6 +2166,7 @@ export class TaskMonitorPanel implements vscode.Disposable {
           }
           case "interrupt":
           case "retry":
+          case "rename-task":
           case "bind-new-feishu-topic":
           case "unbind":
             if (!taskId) {

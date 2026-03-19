@@ -69,6 +69,11 @@ interface TaskSettingsPayload {
   executionProfile?: TaskExecutionProfile;
 }
 
+interface TaskRenamePayload {
+  title: string;
+  source?: MessageSurface;
+}
+
 interface UploadAssetPayload {
   fileName: string;
   mimeType: string;
@@ -213,6 +218,14 @@ export class BridgeClient {
 
   async updateTaskSettings(taskId: string, payload: TaskSettingsPayload): Promise<BridgeTask> {
     const result = await this.requestJson<{ task: BridgeTask }>(`/tasks/${encodeURIComponent(taskId)}/settings`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return result.task;
+  }
+
+  async renameTask(taskId: string, payload: TaskRenamePayload): Promise<BridgeTask> {
+    const result = await this.requestJson<{ task: BridgeTask }>(`/tasks/${encodeURIComponent(taskId)}/title`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
