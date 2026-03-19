@@ -19,7 +19,14 @@ created_env_file=0
 autofilled_entries=()
 
 compose() {
-  docker compose -f "${compose_file}" --env-file "${env_file}" "$@"
+  ensure_env_file
+  (
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+    docker compose -f "${compose_file}" --env-file "${env_file}" "$@"
+  )
 }
 
 require_docker() {
