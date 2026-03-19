@@ -8,6 +8,7 @@ import {
   createDraftCard,
   createTaskControlCard,
   createTaskInspectionSnapshotCard,
+  createTaskRenameCard,
   createTaskStatusSnapshotCard,
 } from "../src/feishu/cards";
 
@@ -156,6 +157,7 @@ describe("feishu card builders", () => {
     assert.match(taskJson, /While Running: Queue Next Turn/);
     assert.match(taskJson, /Run Controls/);
     assert.match(taskJson, /Thread Controls/);
+    assert.match(taskJson, /Rename Task/);
     assert.match(taskJson, /View Status/);
     assert.match(taskJson, /Stop Turn/);
     assert.match(taskJson, /Retry Last Turn/);
@@ -167,6 +169,30 @@ describe("feishu card builders", () => {
     assert.match(taskJson, /Rate Limits/);
     assert.match(taskJson, /feishu while running: queue next turn/);
     assert.match(taskJson, /queued next-turn messages: 2/);
+  });
+
+  it("renders a dedicated rename card with a text input that submits form values", () => {
+    const task = createBridgeTask({
+      threadId: "thr-rename-task",
+      title: "Original title",
+      workspaceRoot: "/tmp/workspace",
+      mode: "bridge-managed",
+    });
+
+    const renameCard = createTaskRenameCard({
+      task,
+      binding: BINDING,
+      revision: 4,
+      note: "Rename submitted from VSCode.",
+    });
+
+    const json = JSON.stringify(renameCard);
+    assert.match(json, /Rename Task: Original title/);
+    assert.match(json, /Rename the shared task title/);
+    assert.match(json, /task_title_input/);
+    assert.match(json, /Apply New Title/);
+    assert.match(json, /form_submit/);
+    assert.match(json, /Rename submitted from VSCode\./);
   });
 
   it("explains the next step when a host task exists but the first turn has not started yet", () => {

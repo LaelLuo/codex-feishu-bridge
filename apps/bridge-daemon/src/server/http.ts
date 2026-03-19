@@ -9,6 +9,7 @@ import {
   BridgeService,
   type BridgeServiceSnapshot,
   type CreateTaskRequest,
+  type TaskRenameRequest,
   type TaskSettingsRequest,
   type TaskMessageRequest,
   type UploadAssetRequest,
@@ -225,6 +226,13 @@ export function createBridgeHttpServer(options: BridgeHttpServerOptions): http.S
         if (request.method === "POST" && segments.length === 3 && segments[2] === "settings") {
           const body = await readJsonBody<TaskSettingsRequest>(request);
           const task = await service.updateTaskSettings(taskId, body);
+          sendJson(response, 200, { task });
+          return;
+        }
+
+        if (request.method === "POST" && segments.length === 3 && segments[2] === "title") {
+          const body = await readJsonBody<TaskRenameRequest>(request);
+          const task = await service.renameTask(taskId, body);
           sendJson(response, 200, { task });
           return;
         }

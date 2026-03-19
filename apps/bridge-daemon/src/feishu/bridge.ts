@@ -19,6 +19,7 @@ import {
   createCardTestCard,
   createDraftCard,
   createTaskInspectionSnapshotCard,
+  createTaskRenameCard,
   createTaskControlCard,
   createTaskStatusSnapshotCard,
   type FeishuCardActionValue,
@@ -131,6 +132,7 @@ export interface FeishuCardActionEvent {
     value?: FeishuCardActionValue;
     tag?: string;
     option?: string;
+    form_value?: Record<string, unknown>;
     timezone?: string;
   };
 }
@@ -326,6 +328,30 @@ function formatTaskSummary(task: BridgeTask): string {
     ...formatExecutionProfile(task.executionProfile),
     task.feishuBinding ? `threadKey: ${task.feishuBinding.threadKey}` : "threadKey: unbound",
   ].join("\n");
+}
+
+function readCardFormString(
+  event: FeishuCardActionEvent | undefined,
+  fieldName: string,
+): string | undefined {
+  const rawValue = event?.action?.form_value?.[fieldName];
+  if (typeof rawValue === "string") {
+    return rawValue;
+  }
+  if (Array.isArray(rawValue)) {
+    const first = rawValue.find((entry): entry is string => typeof entry === "string");
+    return first;
+  }
+  if (rawValue && typeof rawValue === "object") {
+    if ("value" in rawValue && typeof (rawValue as { value?: unknown }).value === "string") {
+      return (rawValue as { value: string }).value;
+    }
+    if ("text" in rawValue && typeof (rawValue as { text?: unknown }).text === "string") {
+      return (rawValue as { text: string }).text;
+    }
+  }
+
+  return undefined;
 }
 
 function formatTaskList(tasks: BridgeTask[], currentTaskId?: string): string {
@@ -842,6 +868,26 @@ export class FeishuBridge {
     }
 
     switch (event.kind) {
+      case "task.updated": {
+        const payload =
+          event.payload && typeof event.payload === "object"
+            ? (event.payload as { titleRenamed?: boolean; nextTitle?: string; renamedBy?: string })
+            : {};
+        if (!payload.titleRenamed) {
+          return;
+        }
+        await this.renderTaskControlCard({
+          task,
+          binding: task.feishuBinding,
+          note:
+            payload.renamedBy === "vscode"
+              ? `Task renamed in VSCode to ${payload.nextTitle ?? task.title}.`
+              : payload.renamedBy === "feishu"
+                ? `Task renamed to ${payload.nextTitle ?? task.title}.`
+                : `Task renamed to ${payload.nextTitle ?? task.title}.`,
+        });
+        return;
+      }
       case "task.message.queued":
         await this.renderTaskControlCard({
           task,
@@ -1734,6 +1780,53 @@ export class FeishuBridge {
     });
   }
 
+  private async replyTaskRenameCard(params: {
+    task: BridgeTask;
+    binding: FeishuThreadBinding;
+    note?: string;
+    replyTargetId?: string;
+  }): Promise<void> {
+    const { task, binding, note, replyTargetId } = params;
+    const currentCard = this.getThreadTaskCard(binding);
+    const revision = (currentCard?.revision ?? 0) + 1;
+    const card = createTaskRenameCard({
+      task,
+      binding,
+      revision,
+      note,
+    });
+    const targetMessageId =
+      replyTargetId ??
+      binding.rootMessageId ??
+      currentCard?.messageId ??
+      binding.threadKey;
+    await this.sendCardReply(targetMessageId, card);
+  }
+
+  private async patchTaskRenameCard(params: {
+    task: BridgeTask;
+    binding: FeishuThreadBinding;
+    note?: string;
+    messageId?: string;
+  }): Promise<void> {
+    const { task, binding, note, messageId } = params;
+    if (!messageId) {
+      return;
+    }
+
+    const currentCard = this.getThreadTaskCard(binding);
+    const revision = (currentCard?.revision ?? 0) + 1;
+    await this.patchCardMessage(
+      messageId,
+      createTaskRenameCard({
+        task,
+        binding,
+        revision,
+        note,
+      }),
+    );
+  }
+
   private async renderArchivedThreadCard(params: {
     binding: FeishuThreadBinding;
     taskId?: string;
@@ -2381,6 +2474,37 @@ export class FeishuBridge {
             ? "Feishu messages sent during a running turn will now queue for the next turn."
             : "Feishu messages sent during a running turn will now steer the active turn immediately.";
         break;
+      }
+      case "task.rename.open":
+        await this.replyTaskRenameCard({
+          task,
+          binding,
+          note: "Submit a new task title here to update both Feishu and the VSCode monitor.",
+          replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
+        });
+        return;
+      case "task.rename.submit": {
+        const submittedTitle = readCardFormString(event, "task_title_input")?.trim() ?? "";
+        if (!submittedTitle) {
+          await this.patchTaskRenameCard({
+            task,
+            binding,
+            messageId: event?.open_message_id,
+            note: "Enter a non-empty title before submitting.",
+          });
+          return;
+        }
+        const renamedTask = await this.options.service.renameTask(task.taskId, {
+          title: submittedTitle,
+          source: "feishu",
+        });
+        await this.patchTaskRenameCard({
+          task: renamedTask,
+          binding,
+          messageId: event?.open_message_id,
+          note: `Task renamed to ${renamedTask.title}.`,
+        });
+        return;
       }
       case "task.status":
         await this.replyTaskStatusSnapshotCard({

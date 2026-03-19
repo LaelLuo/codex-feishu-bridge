@@ -1459,6 +1459,62 @@ describe("bridge service runtime status mapping", () => {
     await runtime.dispose();
   });
 
+  it("preserves a manually renamed task title when later runtime syncs report the original thread name", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-title-rename-test");
+    await prepareBridgeDirectories(config);
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-rename-preserve",
+        name: "Imported runtime title",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T02:00:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const [importedTask] = await service.importThreads("thread-rename-preserve");
+    assert.equal(importedTask?.title, "Imported runtime title");
+    assert.equal(importedTask?.titleLocked, false);
+
+    const renamedTask = await service.renameTask("thread-rename-preserve", {
+      title: "Pinned monitor title",
+      source: "vscode",
+    });
+    assert.equal(renamedTask.title, "Pinned monitor title");
+    assert.equal(renamedTask.titleLocked, true);
+
+    runtime.setThreads([
+      {
+        id: "thread-rename-preserve",
+        name: "Imported runtime title",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T02:05:00.000Z",
+        status: {
+          type: "idle",
+        },
+      },
+    ]);
+
+    const syncedTasks = await service.syncRuntimeThreads();
+    const syncedTask = syncedTasks.find((task) => task.taskId === "thread-rename-preserve");
+    assert.ok(syncedTask);
+    assert.equal(syncedTask?.title, "Pinned monitor title");
+    assert.equal(syncedTask?.titleLocked, true);
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
   it("tolerates missing rollout files when importing host threads", async () => {
     const namespace = randomUUID();
     const config = createTestBridgeConfig(namespace);

@@ -95,6 +95,11 @@ export interface TaskSettingsRequest {
   executionProfile?: TaskExecutionProfile;
 }
 
+export interface TaskRenameRequest {
+  title: string;
+  source?: MessageSurface;
+}
+
 export interface UploadAssetRequest {
   fileName: string;
   mimeType: string;
@@ -200,6 +205,10 @@ function normalizeQueuedMessageCount(value: number | undefined): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value ?? 0)) : 0;
 }
 
+function normalizeTitleLocked(value: boolean | undefined): boolean {
+  return value === true;
+}
+
 function taskOriginFromSource(
   source: MessageSurface | undefined,
   mode: BridgeTask["mode"],
@@ -215,6 +224,7 @@ function hydratePersistedTask(task: BridgeTask): BridgeTask {
   const hydratedTask = structuredClone(task);
   hydratedTask.assets = normalizeTaskAssets(hydratedTask);
   hydratedTask.taskOrigin = normalizeTaskOrigin(task.taskOrigin, task.mode);
+  hydratedTask.titleLocked = normalizeTitleLocked(task.titleLocked);
   hydratedTask.executionProfile = normalizeExecutionProfile(task.executionProfile);
   hydratedTask.desktopReplySyncToFeishu = task.desktopReplySyncToFeishu ?? Boolean(task.feishuBinding);
   hydratedTask.feishuRunningMessageMode = normalizeFeishuRunningMessageMode(task.feishuRunningMessageMode);
@@ -229,6 +239,7 @@ function cloneTask(task: BridgeTask): BridgeTask {
   const clonedTask = structuredClone(task);
   clonedTask.assets = normalizeTaskAssets(clonedTask);
   clonedTask.taskOrigin = normalizeTaskOrigin(clonedTask.taskOrigin, clonedTask.mode);
+  clonedTask.titleLocked = normalizeTitleLocked(clonedTask.titleLocked);
   clonedTask.executionProfile = normalizeExecutionProfile(clonedTask.executionProfile);
   clonedTask.desktopReplySyncToFeishu = clonedTask.desktopReplySyncToFeishu ?? Boolean(clonedTask.feishuBinding);
   clonedTask.feishuRunningMessageMode = normalizeFeishuRunningMessageMode(clonedTask.feishuRunningMessageMode);
@@ -1264,6 +1275,31 @@ export class BridgeService {
     return cloneTask(task);
   }
 
+  async renameTask(taskId: string, request: TaskRenameRequest): Promise<BridgeTask> {
+    const task = this.requireTask(taskId);
+    const nextTitle = request.title.trim();
+    if (!nextTitle) {
+      throw new Error("title is required");
+    }
+    if (task.title === nextTitle && task.titleLocked) {
+      return cloneTask(task);
+    }
+
+    const previousTitle = task.title;
+    task.title = nextTitle;
+    task.titleLocked = true;
+    this.touchTask(task);
+    await this.persistState();
+    this.emitEvent(task.taskId, "task.updated", {
+      task: cloneTask(task),
+      titleRenamed: true,
+      previousTitle,
+      nextTitle,
+      renamedBy: request.source ?? "runtime",
+    });
+    return cloneTask(task);
+  }
+
   async resolveApproval(taskId: string, requestId: string, decision: CodexApprovalDecision): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
     const approval = task.pendingApprovals.find((entry) => entry.requestId === requestId);
@@ -1854,7 +1890,7 @@ export class BridgeService {
       let effectiveUpdatedAt = nextUpdatedAt;
       let importedConversationDelta: ConversationMessage[] = [];
 
-      if (task.title !== nextTitle) {
+      if (!task.titleLocked && task.title !== nextTitle) {
         task.title = nextTitle;
         changed = true;
         taskChanged = true;

@@ -42,7 +42,7 @@ function parseMessageText(request: RequestRecord): string {
 
 function parseInteractiveCard(request: RequestRecord): Record<string, unknown> | null {
   const payload = JSON.parse(request.body ?? "{}") as { content?: string; msg_type?: string };
-  if (payload.msg_type !== "interactive" || !payload.content) {
+  if ((payload.msg_type !== undefined && payload.msg_type !== "interactive") || !payload.content) {
     return null;
   }
 
@@ -756,6 +756,117 @@ describe("feishu long connection ingress", () => {
       }
 
       assert.equal(taskCards.get(`${task.feishuBinding?.chatId}:${task.feishuBinding?.threadKey}`)?.messageId, currentCard?.messageId);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("opens a dedicated rename card and syncs renamed titles back into the bound task card", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Rename card task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardTitle(request, `Task: ${task.title}`),
+          ),
+        "initial bound task card",
+      );
+
+      const taskCards = (
+        harness.feishu as unknown as { threadTaskCards: Map<string, { messageId: string }> }
+      ).threadTaskCards;
+      const currentCard = taskCards.get(`${task.feishuBinding?.chatId}:${task.feishuBinding?.threadKey}`);
+      assert.ok(currentCard?.messageId);
+
+      const previousRenameReplyCount = harness.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.url.includes("/open-apis/im/v1/messages/") &&
+          requestContainsCardTitle(request, `Rename Task: ${task.title}`),
+      ).length;
+
+      const openRenameResult = await harness.onCardAction({
+        open_message_id: currentCard?.messageId,
+        open_id: "ou_rename_card",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.rename.open",
+            chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+            threadKey: task.feishuBinding?.threadKey ?? "omt_rename_task",
+            rootMessageId: task.feishuBinding?.rootMessageId,
+            taskId: task.taskId,
+            revision: 1,
+          },
+        },
+      });
+
+      assert.equal(openRenameResult, undefined);
+      await waitFor(
+        () =>
+          harness.requests.filter(
+            (request) =>
+              request.method === "POST" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardTitle(request, `Rename Task: ${task.title}`),
+          ).length > previousRenameReplyCount,
+        "rename card reply",
+      );
+
+      const submitRenameResult = await harness.onCardAction({
+        open_message_id: "om_rename_card",
+        open_id: "ou_rename_card",
+        action: {
+          tag: "button",
+          form_value: {
+            task_title_input: "Renamed from Feishu",
+          },
+          value: {
+            kind: "task.rename.submit",
+            chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+            threadKey: task.feishuBinding?.threadKey ?? "omt_rename_task",
+            rootMessageId: task.feishuBinding?.rootMessageId,
+            taskId: task.taskId,
+            revision: 2,
+          },
+        },
+      });
+
+      assert.equal(submitRenameResult, undefined);
+      await waitFor(
+        () => harness.service.getTask(task.taskId)?.title === "Renamed from Feishu",
+        "renamed task title",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${currentCard?.messageId}`) &&
+              requestContainsCardTitle(request, "Task: Renamed from Feishu"),
+          ),
+        "patched bound task card with renamed title",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_rename_card") &&
+              requestContainsCardTitle(request, "Rename Task: Renamed from Feishu") &&
+              requestContainsCardText(request, "Task renamed to Renamed from Feishu."),
+          ),
+        "patched rename card confirmation",
+      );
     } finally {
       await harness.cleanup();
     }

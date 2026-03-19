@@ -64,6 +64,13 @@ export interface FeishuTaskStatusSnapshotCardData {
   note?: string;
 }
 
+export interface FeishuTaskRenameCardData {
+  task: BridgeTask;
+  binding: FeishuThreadBinding;
+  revision: number;
+  note?: string;
+}
+
 export interface FeishuTaskInspectionSnapshotCardData {
   task: BridgeTask;
   queryLabel: string;
@@ -92,6 +99,8 @@ export type FeishuCardActionKind =
   | "task.select.effort"
   | "task.toggle.plan-mode"
   | "task.toggle.feishu-running-mode"
+  | "task.rename.open"
+  | "task.rename.submit"
   | "task.status"
   | "task.interrupt"
   | "task.retry"
@@ -140,6 +149,13 @@ function action(actions: Array<Record<string, unknown>>): Record<string, unknown
   };
 }
 
+function form(elements: Array<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    tag: "form",
+    elements,
+  };
+}
+
 function button(params: {
   text: string;
   value: FeishuCardActionValue;
@@ -150,6 +166,40 @@ function button(params: {
     type: params.type ?? "default",
     text: plainText(params.text),
     value: params.value,
+  };
+}
+
+function formSubmitButton(params: {
+  text: string;
+  value: FeishuCardActionValue;
+  type?: "default" | "primary" | "danger";
+}): Record<string, unknown> {
+  return {
+    tag: "button",
+    type: params.type ?? "primary",
+    text: plainText(params.text),
+    action_type: "form_submit",
+    behaviors: [
+      {
+        type: "callback",
+        value: params.value,
+      },
+    ],
+  };
+}
+
+function inputField(params: {
+  name: string;
+  label: string;
+  placeholder: string;
+  defaultValue?: string;
+}): Record<string, unknown> {
+  return {
+    tag: "input",
+    name: params.name,
+    label: plainText(params.label),
+    placeholder: plainText(params.placeholder),
+    ...(params.defaultValue !== undefined ? { default_value: params.defaultValue } : {}),
   };
 }
 
@@ -613,11 +663,19 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       markdown(
         [
           "**Thread Controls**",
+          "- Rename Task changes the shared bridge title in both VSCode monitor and Feishu cards",
           "- Unbind keeps this topic reusable for another task later",
           "- Archive closes this topic for future work and blocks later plain text from reaching the workstation",
         ].join("\n"),
       ),
       action([
+        button({
+          text: "Rename Task",
+          value: baseActionValue("task.rename.open", binding, {
+            taskId: task.taskId,
+            revision,
+          }),
+        }),
         button({
           text: "Unbind Thread",
           value: baseActionValue("task.unbind", binding, {
@@ -650,6 +708,58 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
             revision,
           }),
         }),
+      ]),
+    ],
+  };
+}
+
+export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInteractiveCard {
+  const note = truncateNote(data.note);
+  const { task, binding, revision } = data;
+
+  return {
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+    },
+    header: {
+      title: plainText(`Rename Task: ${task.title}`),
+      template: "blue",
+    },
+    elements: [
+      markdown(
+        [
+          "**Rename the shared task title**",
+          "- changes here update the VSCode monitor and later Feishu task cards",
+          "- this only renames the bridge task label; it does not rename files or the underlying Codex thread id",
+        ].join("\n"),
+      ),
+      divider(),
+      markdown(
+        [
+          "**Current Title**",
+          task.title,
+        ].join("\n"),
+      ),
+      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
+      divider(),
+      form([
+        inputField({
+          name: "task_title_input",
+          label: "New title",
+          placeholder: "Enter the new task title",
+          defaultValue: task.title,
+        }),
+        action([
+          formSubmitButton({
+            text: "Apply New Title",
+            type: "primary",
+            value: baseActionValue("task.rename.submit", binding, {
+              taskId: task.taskId,
+              revision,
+            }),
+          }),
+        ]),
       ]),
     ],
   };

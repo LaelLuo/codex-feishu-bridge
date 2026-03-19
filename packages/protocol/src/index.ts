@@ -109,6 +109,7 @@ export interface BridgeTask {
   mode: TaskMode;
   taskOrigin: TaskOrigin;
   title: string;
+  titleLocked?: boolean;
   workspaceRoot: string;
   status: TaskStatus;
   activeTurnId?: string;
@@ -162,6 +163,7 @@ export function createBridgeTask(seed: BridgeTaskSeed): BridgeTask {
     mode: seed.mode,
     taskOrigin,
     title: seed.title,
+    titleLocked: false,
     workspaceRoot: seed.workspaceRoot,
     status: "idle",
     executionProfile: structuredClone(seed.executionProfile ?? {}),
