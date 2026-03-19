@@ -52,6 +52,7 @@ const ACTIVE_TURN_START_TIMEOUT_MS = 8_000;
 const ACTIVE_TURN_RETRY_INTERVAL_MS = 250;
 const AGGREGATED_DIFF_PATH = "__aggregated_diff__";
 const AGENT_DIFF_SUMMARY = "Extracted from agent diff block";
+const MIRRORED_ROLLOUT_DUPLICATE_WINDOW_MS = 50;
 const SANDBOX_MODE_VALUES: readonly SandboxMode[] = ["read-only", "workspace-write", "danger-full-access"];
 const APPROVAL_POLICY_VALUES: readonly ApprovalPolicy[] = ["untrusted", "on-failure", "on-request", "never"];
 
@@ -620,7 +621,7 @@ function isMirroredRolloutMessagePair(
   const timestampsMatch =
     Number.isFinite(previousTimestamp) &&
     Number.isFinite(nextTimestamp) &&
-    Math.abs(previousTimestamp - nextTimestamp) <= 5;
+    Math.abs(previousTimestamp - nextTimestamp) <= MIRRORED_ROLLOUT_DUPLICATE_WINDOW_MS;
 
   return (
     previous.author === next.author &&
