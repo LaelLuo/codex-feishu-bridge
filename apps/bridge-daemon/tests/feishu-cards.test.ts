@@ -69,7 +69,7 @@ describe("feishu card builders", () => {
     }
   });
 
-  it("renders clearer mobile guidance and button labels for draft and bound-task cards", () => {
+  it("renders concise draft and bound-task cards with the key controls intact", () => {
     const draftCard = createDraftCard({
       prompt: "Inspect the current bridge task state.",
       model: "gpt-5.4",
@@ -140,23 +140,21 @@ describe("feishu card builders", () => {
     const draftJson = JSON.stringify(draftCard);
     const taskJson = JSON.stringify(taskCard);
 
-    assert.match(draftJson, /How this thread works/);
+    assert.match(draftJson, /Send text, photos, or files here to build the draft/);
     assert.match(draftJson, /Create on Host/);
     assert.match(draftJson, /Reset to Defaults/);
     assert.match(draftJson, /Discard Draft/);
     assert.match(draftJson, /Plan Mode: On/);
-    assert.match(draftJson, /Latest Update/);
+    assert.match(draftJson, /Update/);
 
-    assert.match(taskJson, /How this thread works/);
-    assert.match(taskJson, /Current Run Settings/);
+    assert.match(taskJson, /This thread stays attached to the same host task/);
+    assert.match(taskJson, /Run Settings/);
     assert.match(taskJson, /model: runtime-default/);
     assert.match(taskJson, /reasoning: model-default/);
     assert.match(taskJson, /plan mode: off/);
     assert.match(taskJson, /Model: runtime-default/);
     assert.match(taskJson, /Reasoning: model-default/);
     assert.match(taskJson, /Plan Mode: Off/);
-    assert.match(taskJson, /Run Controls/);
-    assert.match(taskJson, /Thread Controls/);
     assert.match(taskJson, /Rename Task/);
     assert.match(taskJson, /View Status/);
     assert.match(taskJson, /Stop Turn/);
@@ -188,7 +186,7 @@ describe("feishu card builders", () => {
 
     const json = JSON.stringify(renameCard);
     assert.match(json, /Rename Task: Original title/);
-    assert.match(json, /Rename the shared task title/);
+    assert.match(json, /Renames the shared bridge task in both VSCode and Feishu/);
     assert.match(json, /task_title_input/);
     assert.match(json, /Apply New Title/);
     assert.match(json, /form_submit/);
@@ -258,7 +256,7 @@ describe("feishu card builders", () => {
     });
 
     const json = JSON.stringify(taskCard);
-    assert.match(json, /Current Run Settings/);
+    assert.match(json, /Run Settings/);
     assert.match(json, /model: gpt-5\.4 \(default\)/);
     assert.match(json, /reasoning: high/);
     assert.match(json, /plan mode: on/);
@@ -294,8 +292,8 @@ describe("feishu card builders", () => {
 
     const json = JSON.stringify(statusCard);
     assert.match(json, /Task Status Snapshot: Status snapshot task/);
-    assert.match(json, /Snapshot Details/);
-    assert.match(json, /Use the main task card for controls/);
+    assert.match(json, /Details/);
+    assert.match(json, /Use the main task card for retry, interrupt, approvals, unbind, and archive/);
     assert.doesNotMatch(json, /Latest Update/);
     assert.doesNotMatch(json, /View Status/);
     assert.doesNotMatch(json, /Stop Turn/);
@@ -326,10 +324,10 @@ describe("feishu card builders", () => {
     });
 
     const json = JSON.stringify(activityCard);
-    assert.match(json, /Task Activity: Activity task/);
-    assert.match(json, /Message Receipt/);
+    assert.match(json, /Activity: Activity task/);
+    assert.match(json, /Receipt/);
     assert.match(json, /receipt: queued for the next turn/);
-    assert.match(json, /Current Agent Status/);
+    assert.match(json, /Status/);
     assert.match(json, /state: queued/);
     assert.match(json, /Queued the latest Feishu message for the next turn\./);
     assert.match(json, /Withdraw This Message/);
@@ -355,8 +353,8 @@ describe("feishu card builders", () => {
     assert.match(json, /Bridge Health Snapshot: Inspection snapshot task/);
     assert.match(json, /Snapshot Query/);
     assert.match(json, /query: Bridge Health/);
-    assert.match(json, /Snapshot Details/);
-    assert.match(json, /Use the main task card for controls/);
+    assert.match(json, /Details/);
+    assert.match(json, /Read-only snapshot\. Use the main task card for controls\./);
     assert.doesNotMatch(json, /Latest Update/);
     assert.doesNotMatch(json, /View Status/);
     assert.doesNotMatch(json, /Stop Turn/);
@@ -373,7 +371,7 @@ describe("feishu card builders", () => {
 
     const json = JSON.stringify(card);
     assert.match(json, /Archived Codex Topic/);
-    assert.match(json, /This Feishu topic is archived/);
+    assert.match(json, /This Feishu topic is archived\. New messages here no longer reach the workstation\./);
     assert.match(json, /taskId: task-archived/);
     assert.match(json, /start a new Feishu topic/i);
   });

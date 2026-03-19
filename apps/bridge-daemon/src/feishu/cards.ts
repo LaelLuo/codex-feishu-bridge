@@ -515,20 +515,12 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
       template: "blue",
     },
     elements: [
-      markdown(
-        [
-          "**How this thread works**",
-          "- plain text updates the draft prompt",
-          "- photos and files are queued as draft attachments",
-          "- press Create on Host to create the real Codex task on the workstation",
-          "- after binding, later plain text, photos, and files continue the same host task",
-        ].join("\n"),
-      ),
+      markdown("Send text, photos, or files here to build the draft. Tap Create on Host when ready."),
       divider(),
-      markdown(`**Draft Prompt**\n${data.prompt?.trim() ? data.prompt : "_Send plain text in this thread to set the prompt._"}`),
+      markdown(`**Prompt**\n${data.prompt?.trim() ? data.prompt : "_Send plain text in this thread to set the prompt._"}`),
       markdown(
         [
-          "**Current Settings**",
+          "**Settings**",
           ...formatExecutionProfile({
             model: data.model,
             effort: data.effort,
@@ -539,7 +531,7 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
           `attachments: ${data.attachmentSummary ?? "none"}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
       divider(),
       ...(modelOptions.length
         ? [
@@ -658,14 +650,7 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       template: task.status === "failed" ? "red" : task.status === "awaiting-approval" ? "yellow" : "green",
     },
     elements: [
-      markdown(
-        [
-          "**How this thread works**",
-          "- plain text, photos, and files in this thread are forwarded into the same host Codex task",
-          "- agent replies, approvals, and task notes are returned to this thread",
-          "- use Unbind Thread if you want to detach Feishu without deleting the host task",
-        ].join("\n"),
-      ),
+      markdown("This thread stays attached to the same host task."),
       divider(),
       ...(task.conversation.length === 0
         ? [
@@ -675,7 +660,7 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
         : []),
       markdown(
         [
-          `**Current Task**`,
+          `**Task**`,
           `taskId: ${task.taskId}`,
           `status: ${task.status}`,
           ...formatExecutionProfile(task.executionProfile),
@@ -689,13 +674,13 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       divider(),
       markdown(
         [
-          "**Current Run Settings**",
+          "**Run Settings**",
           `model: ${currentModelLabel}`,
           `reasoning: ${currentEffortLabel}`,
           `plan mode: ${task.executionProfile.planMode ? "on" : "off"}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
       divider(),
       action([
         selectStatic({
@@ -729,12 +714,6 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       ]),
       ...buildApprovalActionRows(task, binding, revision),
       divider(),
-      markdown(
-        [
-          "**Run Controls**",
-          "- refresh the current summary, retry the last turn, or stop a running turn",
-        ].join("\n"),
-      ),
       action([
         button({
           text: "View Status",
@@ -761,14 +740,6 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
         }),
       ]),
       divider(),
-      markdown(
-        [
-          "**Thread Controls**",
-          "- Rename Task changes the shared bridge title in both VSCode monitor and Feishu cards",
-          "- Unbind keeps this topic reusable for another task later",
-          "- Archive closes this topic for future work and blocks later plain text from reaching the workstation",
-        ].join("\n"),
-      ),
       action([
         button({
           text: "Rename Task",
@@ -828,13 +799,7 @@ export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInte
       template: "blue",
     },
     elements: [
-      markdown(
-        [
-          "**Rename the shared task title**",
-          "- changes here update the VSCode monitor and later Feishu task cards",
-          "- this only renames the bridge task label; it does not rename files or the underlying Codex thread id",
-        ].join("\n"),
-      ),
+      markdown("Renames the shared bridge task in both VSCode and Feishu."),
       divider(),
       markdown(
         [
@@ -842,7 +807,7 @@ export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInte
           task.title,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
       divider(),
       form([
         inputField({
@@ -887,13 +852,13 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       update_multi: true,
     },
     header: {
-      title: plainText(`Task Activity: ${task.title}`),
+      title: plainText(`Activity: ${task.title}`),
       template: activityState.template,
     },
     elements: [
       markdown(
         [
-          "**Message Receipt**",
+          "**Receipt**",
           `receipt: ${formatTaskActivityReceiptState(receiptState)}`,
           queuedMessageId ? `queued message id: ${queuedMessageId}` : undefined,
         ]
@@ -903,32 +868,14 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       divider(),
       markdown(
         [
-          "**Current Agent Status**",
+          "**Status**",
           `state: ${activityState.label}`,
           `detail: ${activityState.detail}`,
           `task status: ${task.status}`,
           `queued next-turn messages: ${task.queuedMessageCount}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
-      divider(),
-      markdown(
-        [
-          "**What happens next**",
-          canWithdrawMessage || canForceTurn
-            ? "- this Feishu message is currently queued, so you can withdraw it or force it to run now"
-            : "- the main task card still owns rename, approvals, retry, archive, and other persistent controls",
-          canForceTurn
-            ? task.activeTurnId
-              ? "- forcing it now interrupts the current turn and starts this queued message immediately"
-              : "- forcing it now starts this queued message immediately"
-            : receiptState === "withdrawn"
-              ? "- this message is no longer queued and will not reach the workstation"
-              : receiptState === "failed"
-                ? "- this message did not reach Codex; send it again if you still need it processed"
-                : "- this card will refresh as the task state changes",
-        ].join("\n"),
-      ),
+      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
       ...(canWithdrawMessage || canForceTurn
         ? [
             divider(),
@@ -994,15 +941,9 @@ export function createTaskStatusSnapshotCard(data: FeishuTaskStatusSnapshotCardD
           `pending approvals: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Snapshot Details**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**Details**\n${note}`)] : []),
       divider(),
-      markdown(
-        [
-          "**Use the main task card for controls**",
-          "- retry, interrupt, approve, unbind, and archive still live on the bound task card",
-          "- this snapshot card is a read-only reply so status checks do not overwrite the main card",
-        ].join("\n"),
-      ),
+      markdown("Use the main task card for retry, interrupt, approvals, unbind, and archive."),
     ],
   };
 }
@@ -1029,15 +970,9 @@ export function createTaskInspectionSnapshotCard(data: FeishuTaskInspectionSnaps
           `status: ${task.status}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Snapshot Details**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**Details**\n${note}`)] : []),
       divider(),
-      markdown(
-        [
-          "**Use the main task card for controls**",
-          "- this snapshot card is a read-only reply for inspection queries from the More menu",
-          "- the main task card remains the place for retry, interrupt, approvals, unbind, and archive",
-        ].join("\n"),
-      ),
+      markdown("Read-only snapshot. Use the main task card for controls."),
     ],
   };
 }
@@ -1055,14 +990,7 @@ export function createArchivedThreadCard(data: FeishuArchivedThreadCardData): Fe
       template: "grey",
     },
     elements: [
-      markdown(
-        [
-          "**This Feishu topic is archived**",
-          "- new plain text, photos, and files in this topic will no longer reach the workstation",
-          "- start a new Feishu topic with the bot when you want to launch or bind another task",
-          "- the original host task is detached but not deleted",
-        ].join("\n"),
-      ),
+      markdown("This Feishu topic is archived. New messages here no longer reach the workstation."),
       divider(),
       markdown(
         [
@@ -1074,7 +1002,9 @@ export function createArchivedThreadCard(data: FeishuArchivedThreadCardData): Fe
           .filter(Boolean)
           .join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Latest Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
+      divider(),
+      markdown("Start a new Feishu topic when you want to launch or bind another task."),
     ],
   };
 }
