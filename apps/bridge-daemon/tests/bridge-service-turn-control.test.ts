@@ -310,6 +310,7 @@ describe("bridge service turn control", () => {
         content: "Follow up after the current turn.",
         source: "feishu",
         replyToFeishu: true,
+        receiptId: "receipt-queued-1",
       });
 
       assert.equal(queued.activeTurnId, "turn-race");
@@ -361,16 +362,23 @@ describe("bridge service turn control", () => {
         feishuRunningMessageMode: "queue",
       });
 
-      const queued = await service.sendMessage(created.taskId, {
-        content: "Run this next.",
+      await service.sendMessage(created.taskId, {
+        content: "Run this later.",
         source: "feishu",
         replyToFeishu: true,
+        receiptId: "receipt-queued-later",
       });
-      assert.equal(queued.queuedMessageCount, 1);
+      const queued = await service.sendMessage(created.taskId, {
+        content: "Run this now.",
+        source: "feishu",
+        replyToFeishu: true,
+        receiptId: "receipt-queued-now",
+      });
+      assert.equal(queued.queuedMessageCount, 2);
 
-      const forced = await service.forceStartQueuedMessage(created.taskId);
+      const forced = await service.forceStartQueuedMessage(created.taskId, "receipt-queued-now");
       assert.equal(runtime.interruptCalls.length, 1);
-      await waitFor(() => (service.getTask(created.taskId)?.queuedMessageCount ?? -1) === 0, "forced queue drain");
+      await waitFor(() => (service.getTask(created.taskId)?.queuedMessageCount ?? -1) === 1, "forced queue drain");
       await waitFor(() => (service.getTask(created.taskId)?.activeTurnId ?? "") === "turn-race-2", "forced second turn");
 
       assert.equal(forced.feishuRunningMessageMode, "queue");
@@ -380,10 +388,46 @@ describe("bridge service turn control", () => {
         input: [
           {
             type: "text",
-            text: "Run this next.",
+            text: "Run this now.",
           },
         ],
       });
+    } finally {
+      await service.dispose();
+      await runtime.dispose();
+    }
+  });
+
+  it("can withdraw a specific queued Feishu message before it starts", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-turn-control-test");
+    await prepareBridgeDirectories(config);
+
+    const runtime = new DelayedTurnStartRuntime();
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    try {
+      const created = await service.createTask({
+        title: "Withdraw queue task",
+        prompt: "Start the first turn.",
+      });
+      await service.sendMessage(created.taskId, {
+        content: "Queue and remove this.",
+        source: "feishu",
+        replyToFeishu: true,
+        receiptId: "receipt-withdraw",
+      });
+
+      assert.equal(service.hasQueuedMessage(created.taskId, "receipt-withdraw"), true);
+      const updated = await service.withdrawQueuedMessage(created.taskId, "receipt-withdraw");
+
+      assert.equal(updated.queuedMessageCount, 0);
+      assert.equal(service.hasQueuedMessage(created.taskId, "receipt-withdraw"), false);
+      assert.equal(runtime.startTurnCalls.length, 1);
     } finally {
       await service.dispose();
       await runtime.dispose();

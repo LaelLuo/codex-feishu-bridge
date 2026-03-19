@@ -50,9 +50,11 @@
 - 负责移动端对话、审批和控制命令
 - 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
 - Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex
-- 已绑定任务卡提供 `View Status`、`Stop Turn`、`Retry Last Turn`、`Rename Task`、`Archive Task`、`Unbind Thread`
+- 已绑定任务卡提供 `Rename Task`、`Archive Task`、`Unbind Thread` 和 `More` 查询入口
 - `Rename Task` 会先下发一张独立的重命名卡；提交后会更新共享 task 标题，并同步回 VSCode monitor 与 Feishu 主任务卡
-- 已绑定任务卡可切换“Feishu 在运行中发来的消息是 steer 当前 turn，还是 queue 到下一轮”
+- 任意一条 Feishu 文本、图片、文件消息都会立即回一张独立的 `Task Activity` 卡，说明这条消息是直接开始 turn、注入当前 turn、还是排队到下一轮
+- 当消息因任务忙碌而排队时，独立 `Task Activity` 卡会提供 `Withdraw This Message` 和 `Run This Message Now` / `Interrupt + Run This Message Now`
+- `More` 菜单里的状态、任务、健康度、账号、额度查询都通过新的只读快照卡回复，而不是覆盖主任务卡
 - `Archive Task` 会终结当前 Feishu 话题的 bridge 绑定能力；后续同话题里的文本、图片、文件不会再继续同步到主机任务
 
 ## 目录结构
@@ -128,7 +130,7 @@
 - 重启时先加载持久化快照，再用 runtime 当前线程列表对账
 - 若 runtime 已回到 `idle/completed/failed/interrupted` 而本地仍有 `pending` approval，会自动转成 `expired`
 - Feishu webhook event id 持久化到 `stateDir/feishu-events.json`，用于重复回调去重
-- Feishu draft card、任务控制卡和 archived thread 状态也持久化到 `stateDir/feishu-events.json`
+- Feishu draft card、任务控制卡、逐消息 `Task Activity` 卡和 archived thread 状态也持久化到 `stateDir/feishu-events.json`
 
 ## CLI 包装器
 

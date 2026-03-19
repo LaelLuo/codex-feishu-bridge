@@ -87,6 +87,7 @@ export interface TaskMessageRequest {
   executionProfile?: TaskExecutionProfile;
   source?: MessageSurface;
   replyToFeishu?: boolean;
+  receiptId?: string;
 }
 
 export interface TaskSettingsRequest {
@@ -123,6 +124,7 @@ interface PendingTurnStart {
 }
 
 interface PendingConversationSource {
+  receiptId: string;
   surface: MessageSurface;
   replyToFeishu: boolean;
   content: string;
@@ -130,6 +132,7 @@ interface PendingConversationSource {
 }
 
 interface QueuedTaskMessage {
+  receiptId: string;
   surface: MessageSurface;
   replyToFeishu: boolean;
   content: string;
@@ -830,6 +833,7 @@ export class BridgeService {
         continue;
       }
       this.queuedMessages.set(taskId, queuedMessages.map((message) => ({
+        receiptId: message.receiptId ?? randomUUID(),
         surface: message.surface,
         replyToFeishu: message.replyToFeishu,
         content: message.content,
@@ -1078,7 +1082,9 @@ export class BridgeService {
       request.replyToFeishu ??
       (messageSource === "feishu" ? true : task.feishuBinding ? task.desktopReplySyncToFeishu : false);
     const assetIds = request.assetIds ?? request.imageAssetIds ?? [];
+    const receiptId = request.receiptId?.trim() || randomUUID();
     const normalizedSource: PendingConversationSource = {
+      receiptId,
       surface: messageSource,
       replyToFeishu,
       content: request.content.trim(),
@@ -1099,6 +1105,7 @@ export class BridgeService {
       await this.persistState();
       this.emitEvent(task.taskId, "task.message.queued", {
         task: cloneTask(task),
+        receiptId,
         queuedMessageCount: task.queuedMessageCount,
       });
       return cloneTask(task);
@@ -1112,9 +1119,11 @@ export class BridgeService {
       this.emitEvent(task.taskId, "task.steered", {
         taskId: task.taskId,
         turnId: task.activeTurnId,
+        receiptId,
       });
     } else {
       const pendingReplyPolicy = {
+        receiptId,
         surface: messageSource,
         replyToFeishu,
         content: request.content.trim(),
@@ -1141,6 +1150,7 @@ export class BridgeService {
       this.emitEvent(task.taskId, "task.message.sent", {
         taskId: task.taskId,
         turnId: turn.id,
+        receiptId,
       });
     }
 
@@ -1340,24 +1350,47 @@ export class BridgeService {
     return cloneTask(task);
   }
 
-  async forceStartQueuedMessage(taskId: string): Promise<BridgeTask> {
+  async withdrawQueuedMessage(taskId: string, receiptId: string): Promise<BridgeTask> {
+    const task = this.requireTask(taskId);
+    const queue = this.queuedMessages.get(taskId);
+    if (!queue?.length) {
+      throw new Error("No queued Feishu message is available.");
+    }
+
+    const index = queue.findIndex((message) => message.receiptId === receiptId);
+    if (index < 0) {
+      throw new Error("That queued Feishu message is no longer available.");
+    }
+
+    queue.splice(index, 1);
+    if (queue.length === 0) {
+      this.queuedMessages.delete(taskId);
+    } else {
+      this.queuedMessages.set(taskId, queue);
+    }
+    task.queuedMessageCount = queue.length;
+    this.touchTask(task);
+    await this.persistState();
+    this.emitEvent(task.taskId, "task.updated", {
+      task: cloneTask(task),
+      queuedMessageWithdrawn: true,
+      receiptId,
+    });
+    return cloneTask(task);
+  }
+
+  async forceStartQueuedMessage(taskId: string, receiptId?: string): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
     if (this.getQueuedMessageCount(taskId) === 0) {
       return cloneTask(task);
     }
 
-    if (task.status === "awaiting-approval") {
-      throw new Error("Task is waiting for approval. Resolve the approval before forcing the queued turn.");
+    if (receiptId) {
+      this.moveQueuedMessageToFront(task, receiptId);
     }
 
-    if (task.status === "blocked") {
-      throw new Error("Task is blocked on user input. Unblock the current turn before forcing the queued turn.");
-    }
-
-    if (task.activeTurnId && task.status === "running") {
+    if (task.activeTurnId) {
       await this.interruptTask(taskId);
-    } else if (task.activeTurnId) {
-      throw new Error("Task still has an active turn. Wait for it to clear before forcing the queued turn.");
     }
 
     await this.processQueuedMessages(taskId);
@@ -1453,6 +1486,7 @@ export class BridgeService {
   private enqueueQueuedMessage(task: BridgeTask, message: QueuedTaskMessage): void {
     const queue = this.queuedMessages.get(task.taskId) ?? [];
     queue.push({
+      receiptId: message.receiptId,
       surface: message.surface,
       replyToFeishu: message.replyToFeishu,
       content: message.content,
@@ -1480,6 +1514,7 @@ export class BridgeService {
   private requeueQueuedMessageFront(task: BridgeTask, message: QueuedTaskMessage): void {
     const queue = this.queuedMessages.get(task.taskId) ?? [];
     queue.unshift({
+      receiptId: message.receiptId,
       surface: message.surface,
       replyToFeishu: message.replyToFeishu,
       content: message.content,
@@ -1491,6 +1526,29 @@ export class BridgeService {
 
   private getQueuedMessageCount(taskId: string): number {
     return this.queuedMessages.get(taskId)?.length ?? 0;
+  }
+
+  hasQueuedMessage(taskId: string, receiptId: string): boolean {
+    return (this.queuedMessages.get(taskId) ?? []).some((message) => message.receiptId === receiptId);
+  }
+
+  private moveQueuedMessageToFront(task: BridgeTask, receiptId: string): void {
+    const queue = this.queuedMessages.get(task.taskId);
+    if (!queue?.length) {
+      throw new Error("No queued Feishu message is available.");
+    }
+
+    const index = queue.findIndex((message) => message.receiptId === receiptId);
+    if (index < 0) {
+      throw new Error("That queued Feishu message is no longer available.");
+    }
+    if (index === 0) {
+      return;
+    }
+
+    const [message] = queue.splice(index, 1);
+    queue.unshift(message);
+    this.queuedMessages.set(task.taskId, queue);
   }
 
   private takePendingTurnReplyPolicy(taskId: string): PendingConversationSource | null {
@@ -1544,6 +1602,7 @@ export class BridgeService {
         task: cloneTask(task),
         queuedMessageStartFailed: true,
         queuedMessageError: error instanceof Error ? error.message : String(error),
+        receiptId: nextQueuedMessage.receiptId,
       });
       this.options.logger.warn("failed to start queued task message", {
         taskId,
@@ -2642,6 +2701,7 @@ conn.close()
           .map(([taskId, queuedMessages]) => [
             taskId,
             queuedMessages.map((message) => ({
+              receiptId: message.receiptId,
               surface: message.surface,
               replyToFeishu: message.replyToFeishu,
               content: message.content,

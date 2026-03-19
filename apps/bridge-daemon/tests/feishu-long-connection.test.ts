@@ -286,13 +286,30 @@ describe("feishu long connection ingress", () => {
 
       await waitFor(
         () =>
-          harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second prompt")) ||
           harness.requests.some(
-            (request) =>
-              requestContainsCardTitle(request, `Task Activity: ${createdTask!.title}`) &&
-              requestContainsCardText(request, "Queued the latest Feishu message"),
+            (request) => {
+              if (request.method !== "POST" || !request.url.includes("/open-apis/im/v1/messages/")) {
+                return false;
+              }
+              const card = parseInteractiveCard(request);
+              const title = ((card?.header as { title?: { content?: string } } | undefined)?.title?.content ?? "").trim();
+              return (
+                title.startsWith("Task Activity:") &&
+                (
+                  requestContainsCardText(request, "This Feishu message started a turn immediately.") ||
+                  requestContainsCardText(request, "This Feishu message was sent into the current running turn.") ||
+                  requestContainsCardText(request, "Queued the latest Feishu message for the next turn.")
+                )
+              );
+            },
           ),
-        "follow-up response or queued-activity card",
+        "follow-up activity card",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second prompt")) ||
+          (harness.service.getTask(createdTask!.taskId)?.queuedMessageCount ?? 0) > 0,
+        "follow-up reply or queue receipt",
       );
     } finally {
       await harness.cleanup();
@@ -915,9 +932,108 @@ describe("feishu long connection ingress", () => {
             request.url.includes("/open-apis/im/v1/messages/") &&
             requestContainsCardTitle(request, `Task Activity: ${task.title}`) &&
             requestContainsCardText(request, "state: queued") &&
-            requestContainsCardText(request, "Queued the latest Feishu message for the next turn."),
+            requestContainsCardText(request, "Queued the latest Feishu message for the next turn.") &&
+            requestContainsCardText(request, "Withdraw This Message") &&
+            requestContainsCardText(request, "Run This Message Now"),
         ),
         true,
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("can withdraw a queued Feishu message from its dedicated activity card", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Withdraw activity task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardTitle(request, `Task: ${task.title}`),
+          ),
+        "initial bound task card",
+      );
+
+      await harness.service.sendMessage(task.taskId, {
+        content: "please run a shell command that needs approval",
+        source: "feishu",
+        replyToFeishu: true,
+      });
+      await waitFor(
+        () => harness.service.getTask(task.taskId)?.status === "awaiting-approval",
+        "awaiting approval status",
+      );
+
+      await harness.onMessage(
+        {
+          message_id: "om_withdraw_follow_up",
+          thread_id: task.feishuBinding?.threadKey ?? "omt_withdraw_follow_up",
+          root_id: task.feishuBinding?.rootMessageId ?? "om_root_withdraw_follow_up",
+          chat_id: task.feishuBinding?.chatId ?? "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "withdraw this queued follow-up" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_withdraw_follow_up",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.service.hasQueuedMessage(task.taskId, "om_withdraw_follow_up"),
+        "queued message receipt",
+      );
+
+      const activityCards = (
+        harness.feishu as unknown as {
+          threadActivityCards: Map<string, { taskId: string; receiptId?: string; messageId: string }>;
+        }
+      ).threadActivityCards;
+      const queuedActivityCard = [...activityCards.values()].find(
+        (card) => card.taskId === task.taskId && card.receiptId === "om_withdraw_follow_up",
+      );
+      assert.ok(queuedActivityCard?.messageId);
+
+      await harness.onCardAction({
+        open_message_id: queuedActivityCard?.messageId,
+        open_id: "ou_withdraw_card",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.withdraw-queued-message",
+            chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+            threadKey: task.feishuBinding?.threadKey ?? "omt_withdraw_follow_up",
+            rootMessageId: task.feishuBinding?.rootMessageId,
+            taskId: task.taskId,
+            queuedMessageId: "om_withdraw_follow_up",
+            revision: 1,
+          },
+        },
+      });
+
+      await waitFor(
+        () => harness.service.hasQueuedMessage(task.taskId, "om_withdraw_follow_up") === false,
+        "queued message withdrawn",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${queuedActivityCard?.messageId}`) &&
+              requestContainsCardText(request, "withdrawn before it ran"),
+          ),
+        "withdrawn activity card patch",
       );
     } finally {
       await harness.cleanup();

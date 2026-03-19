@@ -301,7 +301,7 @@ describe("feishu card builders", () => {
     assert.doesNotMatch(json, /Stop Turn/);
   });
 
-  it("renders a task activity card with queue status and a force-turn action", () => {
+  it("renders a task activity card with receipt details, withdraw, and force-turn actions", () => {
     const task = createBridgeTask({
       threadId: "thr-activity-task",
       title: "Activity task",
@@ -319,14 +319,21 @@ describe("feishu card builders", () => {
       note: "Queued the latest Feishu message for the next turn.",
       runtimeConnected: true,
       runtimeInitialized: true,
+      receiptState: "queued",
+      queuedMessageId: "om_activity_receipt",
+      canWithdrawMessage: true,
+      canForceTurn: true,
     });
 
     const json = JSON.stringify(activityCard);
     assert.match(json, /Task Activity: Activity task/);
+    assert.match(json, /Message Receipt/);
+    assert.match(json, /receipt: queued for the next turn/);
     assert.match(json, /Current Agent Status/);
     assert.match(json, /state: queued/);
     assert.match(json, /Queued the latest Feishu message for the next turn\./);
-    assert.match(json, /Interrupt \+ Run Next Now/);
+    assert.match(json, /Withdraw This Message/);
+    assert.match(json, /Interrupt \+ Run This Message Now/);
   });
 
   it("renders a read-only inspection snapshot card for More-menu queries", () => {

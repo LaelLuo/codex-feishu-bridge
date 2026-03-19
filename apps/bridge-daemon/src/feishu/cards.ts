@@ -66,6 +66,10 @@ export interface FeishuTaskActivityCardData {
   revision: number;
   runtimeConnected: boolean;
   runtimeInitialized: boolean;
+  receiptState: "queued" | "started" | "steered" | "withdrawn" | "failed";
+  queuedMessageId?: string;
+  canWithdrawMessage: boolean;
+  canForceTurn: boolean;
 }
 
 export interface FeishuTaskStatusSnapshotCardData {
@@ -109,6 +113,7 @@ export type FeishuCardActionKind =
   | "task.toggle.plan-mode"
   | "task.toggle.feishu-running-mode"
   | "task.force-turn"
+  | "task.withdraw-queued-message"
   | "task.rename.open"
   | "task.rename.submit"
   | "task.status"
@@ -129,6 +134,7 @@ export interface FeishuCardActionValue {
   rootMessageId?: string;
   taskId?: string;
   requestId?: string;
+  queuedMessageId?: string;
   revision?: number;
 }
 
@@ -293,6 +299,23 @@ function resolveOptionLabel(
 
 function formatFeishuRunningMessageMode(mode: FeishuRunningMessageMode): string {
   return mode === "queue" ? "queue next turn" : "steer current turn";
+}
+
+function formatTaskActivityReceiptState(state: FeishuTaskActivityCardData["receiptState"]): string {
+  switch (state) {
+    case "queued":
+      return "queued for the next turn";
+    case "started":
+      return "started as its own turn";
+    case "steered":
+      return "sent into the current turn";
+    case "withdrawn":
+      return "withdrawn before it ran";
+    case "failed":
+      return "failed to deliver";
+    default:
+      return state;
+  }
 }
 
 function formatTaskActivityState(
@@ -845,14 +868,18 @@ export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInte
 
 export function createTaskActivityCard(data: FeishuTaskActivityCardData): FeishuInteractiveCard {
   const note = truncateNote(data.note);
-  const { task, binding, revision, runtimeConnected, runtimeInitialized } = data;
+  const {
+    task,
+    binding,
+    revision,
+    runtimeConnected,
+    runtimeInitialized,
+    receiptState,
+    queuedMessageId,
+    canWithdrawMessage,
+    canForceTurn,
+  } = data;
   const activityState = formatTaskActivityState(task, runtimeConnected, runtimeInitialized);
-  const canForceQueuedTurn =
-    task.queuedMessageCount > 0 &&
-    runtimeConnected &&
-    runtimeInitialized &&
-    task.status !== "awaiting-approval" &&
-    task.status !== "blocked";
 
   return {
     config: {
@@ -864,6 +891,16 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       template: activityState.template,
     },
     elements: [
+      markdown(
+        [
+          "**Message Receipt**",
+          `receipt: ${formatTaskActivityReceiptState(receiptState)}`,
+          queuedMessageId ? `queued message id: ${queuedMessageId}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      ),
+      divider(),
       markdown(
         [
           "**Current Agent Status**",
@@ -878,34 +915,52 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       markdown(
         [
           "**What happens next**",
-          canForceQueuedTurn
-            ? "- the queued Feishu message will wait unless you force it to run now"
+          canWithdrawMessage || canForceTurn
+            ? "- this Feishu message is currently queued, so you can withdraw it or force it to run now"
             : "- the main task card still owns rename, approvals, retry, archive, and other persistent controls",
-          task.status === "running" && task.queuedMessageCount > 0
-            ? "- forcing it now interrupts the current turn and starts the next queued Feishu message"
-            : task.status === "awaiting-approval"
-              ? "- resolve the pending approval before the queued message can start"
-              : task.status === "blocked"
-                ? "- unblock the current task before the queued message can start"
-                : "- this card will refresh as the queued work advances",
+          canForceTurn
+            ? task.activeTurnId
+              ? "- forcing it now interrupts the current turn and starts this queued message immediately"
+              : "- forcing it now starts this queued message immediately"
+            : receiptState === "withdrawn"
+              ? "- this message is no longer queued and will not reach the workstation"
+              : receiptState === "failed"
+                ? "- this message did not reach Codex; send it again if you still need it processed"
+                : "- this card will refresh as the task state changes",
         ].join("\n"),
       ),
-      ...(canForceQueuedTurn
+      ...(canWithdrawMessage || canForceTurn
         ? [
             divider(),
-            action([
-              button({
-                text:
-                  task.status === "running" && task.activeTurnId
-                    ? "Interrupt + Run Next Now"
-                    : "Run Next Queued Message Now",
-                type: "primary",
-                value: baseActionValue("task.force-turn", binding, {
-                  taskId: task.taskId,
-                  revision,
-                }),
-              }),
-            ]),
+            action(
+              [
+                canWithdrawMessage
+                  ? button({
+                      text: "Withdraw This Message",
+                      type: "danger",
+                      value: baseActionValue("task.withdraw-queued-message", binding, {
+                        taskId: task.taskId,
+                        queuedMessageId,
+                        revision,
+                      }),
+                    })
+                  : null,
+                canForceTurn
+                  ? button({
+                      text:
+                        task.activeTurnId
+                          ? "Interrupt + Run This Message Now"
+                          : "Run This Message Now",
+                      type: "primary",
+                      value: baseActionValue("task.force-turn", binding, {
+                        taskId: task.taskId,
+                        queuedMessageId,
+                        revision,
+                      }),
+                    })
+                  : null,
+              ].filter(Boolean) as Array<Record<string, unknown>>,
+            ),
           ]
         : []),
     ],
