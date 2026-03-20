@@ -77,6 +77,12 @@ describe("bun-first workflow", () => {
     }
   });
 
+  it("does not keep unused tsx tooling in the root workspace", async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+
+    assert.equal("tsx" in (packageJson.devDependencies ?? {}), false);
+  });
+
   it("uses bun-first commands in dev-stack and Docker runtime", async () => {
     const devStack = await readFile(devStackPath, "utf8");
     const compose = await readFile(composePath, "utf8");
