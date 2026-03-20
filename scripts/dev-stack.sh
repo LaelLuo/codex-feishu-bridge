@@ -48,9 +48,9 @@ validate_requested_backend() {
   esac
 }
 
-require_host_node() {
-  if ! command -v node >/dev/null 2>&1; then
-    echo "node is required when CODEX_RUNTIME_BACKEND=socket-proxy." >&2
+require_host_bun() {
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "bun is required when CODEX_RUNTIME_BACKEND=socket-proxy." >&2
     exit 1
   fi
 }
@@ -207,29 +207,20 @@ detect_host_codex_home() {
 detect_host_codex_bin_dir() {
   local codex_command=""
   local resolved_command=""
-  local npm_root=""
-
   if [[ -n "${HOST_CODEX_BIN_DIR:-}" ]] && [[ -d "${HOST_CODEX_BIN_DIR}" ]]; then
     echo "${HOST_CODEX_BIN_DIR}"
     return
   fi
 
   codex_command="$(command -v codex 2>/dev/null || true)"
-  if [[ -n "${codex_command}" ]] && command -v node >/dev/null 2>&1; then
+  if [[ -n "${codex_command}" ]]; then
     resolved_command="$(
-      node -p "const fs=require('fs'); try { process.stdout.write(fs.realpathSync(process.argv[1])) } catch { process.exit(1) }" \
-        "${codex_command}" 2>/dev/null || true
+      readlink -f "${codex_command}" 2>/dev/null \
+        || realpath "${codex_command}" 2>/dev/null \
+        || printf '%s' "${codex_command}"
     )"
     if [[ "${resolved_command}" == */bin/codex.js ]]; then
       dirname "$(dirname "${resolved_command}")"
-      return
-    fi
-  fi
-
-  if command -v npm >/dev/null 2>&1; then
-    npm_root="$(npm root -g 2>/dev/null || true)"
-    if [[ -d "${npm_root}/@openai/codex" ]]; then
-      echo "${npm_root}/@openai/codex"
       return
     fi
   fi
@@ -448,7 +439,7 @@ wait_for_socket() {
 probe_runtime_proxy_socket() {
   local socket_path="$1"
 
-  node -e '
+  bun -e '
     const net = require("node:net");
     const socketPath = process.argv[1];
     const client = net.createConnection(socketPath);
@@ -476,7 +467,7 @@ start_runtime_proxy_if_needed() {
     return
   fi
 
-  require_host_node
+  require_host_bun
   stop_runtime_proxy_if_running
 
   local runtime_proxy_socket
@@ -503,7 +494,7 @@ export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
 export BRIDGE_CODEX_HOME="$(resolve_host_codex_home "${BRIDGE_CODEX_HOME:-}")"
 export CODEX_HOME="${BRIDGE_CODEX_HOME}"
 export CODEX_APP_SERVER_BIN="$(resolve_host_codex_bin "${CODEX_APP_SERVER_BIN:-}")"
-exec node "${repo_root}/apps/bridge-daemon/dist/runtime-socket-proxy.js" >> "${runtime_proxy_log_file}" 2>&1 < /dev/null
+exec bun "${repo_root}/apps/bridge-daemon/dist/runtime-socket-proxy.js" >> "${runtime_proxy_log_file}" 2>&1 < /dev/null
 EOF
     chmod +x "${runtime_proxy_launch_script}"
     if command -v setsid >/dev/null 2>&1; then
@@ -524,9 +515,9 @@ start_workspace_dev() {
 
 install_dependencies() {
   local lock_hash
-  lock_hash="$(hash_file "${repo_root}/package-lock.json")"
+  lock_hash="$(hash_file "${repo_root}/bun.lock")"
 
-  echo "[setup] Checking npm dependencies inside workspace-dev..."
+  echo "[setup] Checking bun dependencies inside workspace-dev..."
   compose exec -T -e LOCK_HASH="${lock_hash}" workspace-dev bash -lc "
     set -euo pipefail
     cd '${workspace_dir}'
@@ -537,12 +528,12 @@ install_dependencies() {
     fi
 
     if [[ ! -d node_modules ]] || [[ \"\${current}\" != \"\${LOCK_HASH}\" ]]; then
-      echo '[setup] Installing npm dependencies...'
-      npm install
+      echo '[setup] Installing bun dependencies...'
+      bun install --frozen-lockfile
       mkdir -p node_modules
       printf '%s\n' \"\${LOCK_HASH}\" > \"\${marker}\"
     else
-      echo '[setup] npm dependencies already up to date.'
+      echo '[setup] bun dependencies already up to date.'
     fi
   "
 }
@@ -552,10 +543,10 @@ build_artifacts() {
   compose exec -T workspace-dev bash -lc "
     set -euo pipefail
     cd '${workspace_dir}'
-    npm run build:shared
-    npm run build:protocol
-    npm run build:daemon
-    npm run build:extension
+    bun run build:shared
+    bun run build:protocol
+    bun run build:daemon
+    bun run build:extension
   "
 }
 
@@ -585,7 +576,7 @@ wait_for_health() {
       fi
     else
       health_json="$(
-        compose exec -T bridge-runtime node -e "
+        compose exec -T bridge-runtime bun -e "
           fetch('http://127.0.0.1:${port}/health')
             .then(async (response) => {
               if (!response.ok) {

@@ -25,7 +25,7 @@
 或者：
 
 ```bash
-npm run monitor:all
+bun run monitor:all
 ```
 
 第一次运行时，脚本会自动创建并补齐 `docker/.env` 里所有能探测到的项，包括：
@@ -54,7 +54,7 @@ npm run monitor:all
 或者：
 
 ```bash
-npm run monitor:socket-proxy
+bun run monitor:socket-proxy
 ```
 
 这条命令也会自动补齐 `docker/.env`，并把运行时相关配置切到 `socket-proxy`。
@@ -153,9 +153,9 @@ CODEX_RUNTIME_PROXY_SOCKET=/workspace/codex-feishu-bridge/.tmp/codex-runtime-pro
 常用配套命令：
 
 ```bash
-npm run status:all
-npm run logs:all
-npm run stop:all
+bun run status:all
+bun run logs:all
+bun run stop:all
 ```
 
 ## VSCode 图形化监视器
@@ -257,13 +257,13 @@ npm run stop:all
 ./scripts/dev-stack.sh monitor socket-proxy
 ```
 
-对应的 npm 一键命令是：
+对应的 bun 一键命令是：
 
 ```bash
-npm run start:stdio
-npm run start:socket-proxy
-npm run monitor:stdio
-npm run monitor:socket-proxy
+bun run start:stdio
+bun run start:socket-proxy
+bun run monitor:stdio
+bun run monitor:socket-proxy
 ```
 
 VSCode 的 [`.vscode/launch.json`](./.vscode/launch.json) 也已经挂上同一条启动任务，所以在仓库里按 `F5` 时，会先自动准备好本地 bridge 开发环境，并在新窗口里直接打开 monitor。
@@ -323,13 +323,13 @@ curl http://127.0.0.1:8787/auth/rate-limits
 你也可以运行运行时验证脚本：
 
 ```bash
-npm run validate:runtime
+bun run validate:runtime
 ```
 
 在 `workspace-dev` 容器内可使用：
 
 ```bash
-BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
+BRIDGE_BASE_URL=http://bridge-runtime:8787 bun run validate:runtime:container
 ```
 
 ### VSCode 图形化监视器
@@ -339,7 +339,7 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 推荐打开方式：
 
 1. 直接运行 `./scripts/dev-stack.sh monitor`
-2. 或者运行 `npm run monitor:all`
+2. 或者运行 `bun run monitor:all`
 3. 如果你本来就在 VSCode 里开发，也可以直接按 `F5`
 
 进入 monitor 后，可以按下面的顺序理解它：
@@ -390,8 +390,8 @@ BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
 如果你只知道群名，可以先解析可见群：
 
 ```bash
-node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --list
-node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --name "你的飞书群名"
+bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --list
+bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --name "你的飞书群名"
 ```
 
 如果设置了 `FEISHU_DEFAULT_CHAT_NAME`，`bridge-daemon` 会在启动时自动解析精确的 `chat_id`。
@@ -425,8 +425,8 @@ node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --name "
    如果你想从后台配置完后再确定 `chat_id`，通常最方便的方式是先让机器人进群，然后运行：
 
    ```bash
-   node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --list
-   node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --name "你的飞书群名"
+   bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --list
+   bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --name "你的飞书群名"
    ```
 
 6. 只有在你明确启用 webhook 兼容路径时，才需要额外配置：
@@ -514,8 +514,8 @@ slash 命令仍然保留为兼容兜底，但不再是推荐主路径。
 - 真实联调建议使用 `CODEX_RUNTIME_BACKEND=stdio`
 - 在 Docker 中复用宿主机登录态依赖 `HOST_CODEX_HOME -> /codex-home`
 - 在 Docker 中复用宿主机 Codex 可执行入口依赖 `HOST_CODEX_BIN_DIR -> /opt/host-codex-bin`
-- `npm run validate:runtime` 默认是只读检查
-- `npm run validate:runtime -- --create-thread` 会创建并恢复真实线程，但不发送 prompt
+- `bun run validate:runtime` 默认是只读检查
+- `bun run validate:runtime -- --create-thread` 会创建并恢复真实线程，但不发送 prompt
 
 ### 仓库地图
 

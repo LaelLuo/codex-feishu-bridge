@@ -34,7 +34,7 @@
 - Codex CLI
 - codex app-server
 - TypeScript monorepo
-- npm workspaces
+- Bun workspaces
 - Docker Compose
 - VSCode extension API
 - Feishu bot or app callbacks

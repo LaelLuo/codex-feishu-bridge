@@ -6,6 +6,7 @@ x-dev-base: &dev-base
     dockerfile: docker/images/dev.Dockerfile
     args:
       NODE_IMAGE: ${NODE_IMAGE:-node:20-bookworm}
+      BUN_VERSION: ${BUN_VERSION:-1.3.11}
   image: ${DEV_IMAGE_NAME:-codex-feishu-bridge-dev:local}
   entrypoint:
     - tini
@@ -49,8 +50,8 @@ x-dev-base: &dev-base
       source: workspace-node-modules
       target: ${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}/node_modules
     - type: volume
-      source: npm-cache
-      target: /home/node/.npm
+      source: bun-cache
+      target: /root/.bun/install/cache
     - type: bind
       source: ../.tmp
       target: /workspace/codex-feishu-bridge/.tmp
@@ -71,10 +72,10 @@ services:
   bridge-runtime:
     <<: *dev-base
     container_name: ${COMPOSE_PROJECT_NAME:-codex-feishu-bridge}-bridge-runtime
-    command: npm run start -w @codex-feishu-bridge/bridge-daemon
+    command: bun run --filter @codex-feishu-bridge/bridge-daemon start
     ports:
       - "${BRIDGE_PORT:-8787}:${BRIDGE_PORT:-8787}"
 
 volumes:
   workspace-node-modules:
-  npm-cache:
+  bun-cache:

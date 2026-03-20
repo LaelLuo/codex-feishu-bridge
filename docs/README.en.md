@@ -65,7 +65,7 @@ Run:
 or:
 
 ```bash
-npm run monitor:all
+bun run monitor:all
 ```
 
 On the first run, the script auto-creates and auto-fills every detectable field in `docker/.env`, including:
@@ -94,7 +94,7 @@ If you need the "start a full-access thread in the host CLI first, then import a
 or:
 
 ```bash
-npm run monitor:socket-proxy
+bun run monitor:socket-proxy
 ```
 
 This path also auto-fills `docker/.env` and switches the runtime-specific fields to `socket-proxy`.
@@ -159,7 +159,7 @@ This path handles:
 
 - creating `docker/.env` when it is missing
 - starting `workspace-dev`
-- installing npm dependencies in Docker
+- installing Bun dependencies in Docker
 - building `shared`, `protocol`, `bridge-daemon`, and `vscode-extension`
 - recreating `bridge-runtime`
 - waiting for `/health`
@@ -183,9 +183,9 @@ This path handles:
 Companion commands:
 
 ```bash
-npm run status:all
-npm run logs:all
-npm run stop:all
+bun run status:all
+bun run logs:all
+bun run stop:all
 ```
 
 If you prefer explicit low-level Docker commands, they still work, but the repository now documents the one-click path as the primary workflow.
@@ -207,13 +207,13 @@ If you want to force a specific runtime mode, you can also run:
 ./scripts/dev-stack.sh monitor socket-proxy
 ```
 
-Matching npm wrappers are available too:
+Matching Bun wrappers are available too:
 
 ```bash
-npm run start:stdio
-npm run start:socket-proxy
-npm run monitor:stdio
-npm run monitor:socket-proxy
+bun run start:stdio
+bun run start:socket-proxy
+bun run monitor:stdio
+bun run monitor:socket-proxy
 ```
 
 The VSCode launch entry in [`.vscode/launch.json`](../.vscode/launch.json) reuses the same bootstrap flow.
@@ -276,13 +276,13 @@ curl http://127.0.0.1:8787/auth/rate-limits
 You can also run the runtime helper:
 
 ```bash
-npm run validate:runtime
+bun run validate:runtime
 ```
 
 Inside `workspace-dev`, use:
 
 ```bash
-BRIDGE_BASE_URL=http://bridge-runtime:8787 npm run validate:runtime:container
+BRIDGE_BASE_URL=http://bridge-runtime:8787 bun run validate:runtime:container
 ```
 
 ## VSCode Monitor
@@ -292,7 +292,7 @@ This is the main desktop entry for watching, taking over, organizing, and syncin
 Recommended way to open it:
 
 1. Run `./scripts/dev-stack.sh monitor`.
-2. Or run `npm run monitor:all`.
+2. Or run `bun run monitor:all`.
 3. If you are already developing in VSCode, you can still press `F5`.
 
 Read the monitor in this order:
@@ -342,8 +342,8 @@ Set:
 If only the group name is known, resolve visible chats with:
 
 ```bash
-node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --list
-node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --name "Your Feishu Group Name"
+bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --list
+bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --name "Your Feishu Group Name"
 ```
 
 When `FEISHU_DEFAULT_CHAT_NAME` is present, `bridge-daemon` resolves the exact chat automatically at startup.
@@ -380,8 +380,8 @@ Use this checklist to collect the values required by `docker/.env`.
    In practice, `chat_id` is usually easiest to resolve after the bot has already joined the group:
 
    ```bash
-   node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --list
-   node --env-file=docker/.env --import tsx scripts/resolve-feishu-chat.ts --name "Your Feishu Group Name"
+   bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --list
+   bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --name "Your Feishu Group Name"
    ```
 
    The first command lists visible chats, and the second resolves the exact `chat_id` for one group name.
@@ -471,8 +471,8 @@ Slash commands remain available as compatibility fallbacks, but card interaction
 - For imported host threads that must keep host path visibility after Feishu binding, prefer `CODEX_RUNTIME_BACKEND=socket-proxy`.
 - Reusing a host login state in Docker uses `HOST_CODEX_HOME -> /codex-home`.
 - Reusing a host Codex executable in Docker uses `HOST_CODEX_BIN_DIR -> /opt/host-codex-bin`.
-- `npm run validate:runtime` is read-only by default.
-- `npm run validate:runtime -- --create-thread` creates and resumes a real thread without sending a prompt.
+- `bun run validate:runtime` is read-only by default.
+- `bun run validate:runtime -- --create-thread` creates and resumes a real thread without sending a prompt.
 
 ## Feishu Notes
 

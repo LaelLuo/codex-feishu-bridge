@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "node -e \"console.log('lint placeholder: protocol')\"",
+    "lint": "bun -e \"console.log('lint placeholder: protocol')\"",
     "test": "tsx --test tests/*.test.ts"
   }
 }

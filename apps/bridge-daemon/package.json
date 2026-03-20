@@ -15,10 +15,10 @@
     "@types/ws": "^8.5.14"
   },
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "bun dist/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "node -e \"console.log('lint placeholder: bridge-daemon')\"",
+    "lint": "bun -e \"console.log('lint placeholder: bridge-daemon')\"",
     "test": "tsx --test tests/*.test.ts"
   }
 }
