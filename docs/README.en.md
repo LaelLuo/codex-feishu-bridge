@@ -128,6 +128,9 @@ FEISHU_DEFAULT_CHAT_NAME=your Feishu group name
 
 If you already know the chat id, you can use `FEISHU_DEFAULT_CHAT_ID=oc_xxx` instead.
 
+`FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` only decide which group bridge uses when it proactively creates a new Feishu topic, for example from `Bind to New Feishu Topic` in the VSCode monitor.
+They do not restrict inbound private chats, and they do not prevent manually started threads in other bot-enabled groups from reaching bridge. Incoming routing still follows the real `chat_id` in each Feishu event.
+
 ### 5. Confirm the Feishu prerequisites
 
 - the bot is already in the target group
@@ -213,8 +216,8 @@ This path handles:
 
 ### 8. Start using Feishu
 
-1. Confirm the target Feishu group already has topic mode enabled.
-2. Create a topic or send a plain-text message in the bot-enabled group.
+1. If you are chatting with the bot directly, send a plain-text message.
+2. If you are in a group, confirm topic mode is enabled and send the message by `@` mentioning the bot inside the topic.
 3. Let bridge reply with a configuration card.
 4. Press `Create on Host`.
 5. Continue the work in the same thread.
@@ -421,6 +424,8 @@ bun --env-file=docker/.env scripts/resolve-feishu-chat.ts --name "Your Feishu Gr
 
 When `FEISHU_DEFAULT_CHAT_NAME` is present, `bridge-daemon` resolves the exact chat automatically at startup.
 
+Whichever form you set, the default chat id/name only affects bridge-initiated topic creation. It is not an inbound routing filter.
+
 ### Feishu Console Setup
 
 Use this checklist to collect the values required by `docker/.env`.
@@ -491,7 +496,8 @@ FEISHU_DEFAULT_CHAT_ID=oc_xxx
 If the bridge starts but nothing happens in the group, check these in order:
 
 - the app bot has actually been added to the target group
-- the target group matches `FEISHU_DEFAULT_CHAT_ID` or `FEISHU_DEFAULT_CHAT_NAME`
+- in a group thread, you actually `@` mentioned the bot; without the mention, Feishu often will not deliver the message to the app
+- if the topic was created from VSCode with `Bind to New Feishu Topic`, the configured default group matches `FEISHU_DEFAULT_CHAT_ID` or `FEISHU_DEFAULT_CHAT_NAME`
 - long-connection event subscription is enabled
 - `im.message.receive_v1` is enabled
 - `card.action.trigger` is enabled if you want card-first interaction
@@ -499,13 +505,18 @@ If the bridge starts but nothing happens in the group, check these in order:
 
 The current Feishu workflow is:
 
-1. Start a new Feishu topic or thread.
-2. Send the first plain-text message describing the task.
+1. In a private chat with the bot, send the first plain-text message describing the task.
+2. In a group, `@` mention the bot inside a topic-enabled thread.
 3. Let `bridge-daemon` create or refresh a draft and reply with a configuration card.
 4. Use the card to choose model, reasoning effort, sandbox, and approval policy.
 5. Press `Create on Host`.
 6. Continue the task with plain text in the same thread.
 7. Use the control card for status, interrupt, retry, approvals, inspect, and unbind actions.
+
+Two implementation details are worth calling out explicitly:
+
+- `FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` are only for bridge-initiated topic creation such as `Bind to New Feishu Topic`
+- Feishu often delivers group `@bot` messages as rich-text `post` payloads instead of raw `text`, and bridge extracts the visible body text before routing them through the normal draft / task flow
 
 Two card actions have intentionally different meanings:
 

@@ -56,9 +56,11 @@
 
 - 一个工作群作为入口
 - 每个 bridge task 绑定一个 Feishu 线程或回复链
+- `FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` 只决定 bridge 主动新建飞书话题时默认落到哪个群，例如 VSCode monitor 的 `Bind to New Feishu Topic`；入站消息路由仍以事件里的真实 `chat_id` 为准
 - 负责移动端对话、审批和控制命令
 - 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
 - Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex
+- 私聊可以直接发送普通 `text`；群聊应在话题模式里 `@` 机器人，Feishu 常会把这类消息投递为 `post` 富文本，bridge 会先提取可见正文再继续按文本消息路由
 - 已绑定任务卡提供 `Rename Task`、`Archive Task`、`Unbind Thread` 和 `More` 查询入口
 - `Rename Task` 会先下发一张独立的重命名卡；提交后会更新共享 task 标题，并同步回 VSCode monitor 与 Feishu 主任务卡
 - 任意一条 Feishu 文本、图片、文件消息都会立即回一张独立的 `Task Activity` 卡，说明这条消息是直接开始 turn、注入当前 turn、还是排队到下一轮
@@ -145,6 +147,7 @@
 
 - 根脚本 `scripts/bridge-cli.mjs` 提供 `list`、`import`、`resume`、`send`
 - 根脚本 `scripts/host-stack.ts` 提供 `start:host` 所需的宿主机原生启动入口：复用 `docker/.env`，自动把容器路径换算成宿主机路径，并在启动前构建 daemon 依赖
+- `docker/.env` 中的 `FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` 仅用于 bridge 主动创建新飞书话题时的默认目标群，不作为私聊或群聊入站消息的硬限制
 - `start:host` 默认不再复用 Docker `.tmp/codex-home`，也不会因为登录态 realpath 命中 `OneDrive\Codex` 就切换默认目录；它优先让本机 `codex` 按默认 home 语义启动，仅在显式配置时才注入 `CODEX_HOME`
 - 根脚本 `scripts/dev-stack.sh` 提供 `up`、`monitor`、`down`、`status`、`logs` 的一键开发环境启动入口，并会在首次运行时自动创建、补齐 `docker/.env`
 - `scripts/dev-stack.sh up|monitor` 可选附带 `stdio`、`socket-proxy` 或 `tcp-proxy` 参数，用来显式切换 Docker-host 权限模式
