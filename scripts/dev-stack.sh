@@ -14,6 +14,9 @@ runtime_proxy_dir="${repo_root}/.tmp/runtime-proxy"
 runtime_proxy_pid_file="${runtime_proxy_dir}/codex-runtime-proxy.pid"
 runtime_proxy_log_file="${runtime_proxy_dir}/codex-runtime-proxy.log"
 runtime_proxy_default_socket="${workspace_dir}/.tmp/codex-runtime-proxy.sock"
+runtime_proxy_default_host="host.docker.internal"
+runtime_proxy_default_port="8788"
+runtime_proxy_default_bind_host="0.0.0.0"
 runtime_proxy_launch_script="${runtime_proxy_dir}/launch-runtime-proxy.sh"
 command="${1:-up}"
 requested_backend="${2:-}"
@@ -42,11 +45,11 @@ require_docker() {
 
 validate_requested_backend() {
   case "${requested_backend}" in
-    ""|stdio|socket-proxy)
+    ""|stdio|socket-proxy|tcp-proxy)
       ;;
     *)
       echo "Unsupported runtime mode: ${requested_backend}" >&2
-      echo "Expected one of: stdio, socket-proxy" >&2
+      echo "Expected one of: stdio, socket-proxy, tcp-proxy" >&2
       exit 1
       ;;
   esac
@@ -54,7 +57,7 @@ validate_requested_backend() {
 
 require_host_bun() {
   if ! command -v bun >/dev/null 2>&1; then
-    echo "bun is required when CODEX_RUNTIME_BACKEND=socket-proxy." >&2
+    echo "bun is required when CODEX_RUNTIME_BACKEND uses a host runtime proxy." >&2
     exit 1
   fi
 }
@@ -137,7 +140,17 @@ determine_runtime_backend() {
 }
 
 runtime_proxy_enabled() {
+  local backend
+  backend="$(read_runtime_backend)"
+  [[ "${backend}" == "socket-proxy" || "${backend}" == "tcp-proxy" ]]
+}
+
+runtime_proxy_uses_socket() {
   [[ "$(read_runtime_backend)" == "socket-proxy" ]]
+}
+
+runtime_proxy_uses_tcp() {
+  [[ "$(read_runtime_backend)" == "tcp-proxy" ]]
 }
 
 hash_file() {
@@ -207,6 +220,34 @@ resolve_runtime_proxy_socket_host_path() {
   fi
 
   resolve_host_path_from_workspace "${current}"
+}
+
+read_runtime_proxy_host() {
+  local current=""
+  current="$(read_env_value CODEX_RUNTIME_PROXY_HOST)"
+  echo "${current:-${runtime_proxy_default_host}}"
+}
+
+read_runtime_proxy_port() {
+  local current=""
+  current="$(read_env_value CODEX_RUNTIME_PROXY_PORT)"
+  echo "${current:-${runtime_proxy_default_port}}"
+}
+
+read_runtime_proxy_bind_host() {
+  local current=""
+  current="$(read_env_value CODEX_RUNTIME_PROXY_BIND_HOST)"
+  echo "${current:-${runtime_proxy_default_bind_host}}"
+}
+
+runtime_proxy_probe_host() {
+  local bind_host="$1"
+  if [[ -z "${bind_host}" || "${bind_host}" == "0.0.0.0" || "${bind_host}" == "::" ]]; then
+    echo "127.0.0.1"
+    return
+  fi
+
+  echo "${bind_host}"
 }
 
 default_host_codex_home_path() {
@@ -369,6 +410,24 @@ autofill_env_file() {
     record_env_update "CODEX_RUNTIME_PROXY_SOCKET" "${runtime_proxy_default_socket}"
   fi
 
+  current="$(read_env_value CODEX_RUNTIME_PROXY_HOST)"
+  if [[ "${backend}" == "tcp-proxy" ]] && [[ -z "${current}" ]]; then
+    set_env_value CODEX_RUNTIME_PROXY_HOST "${runtime_proxy_default_host}"
+    record_env_update "CODEX_RUNTIME_PROXY_HOST" "${runtime_proxy_default_host}"
+  fi
+
+  current="$(read_env_value CODEX_RUNTIME_PROXY_PORT)"
+  if [[ "${backend}" == "tcp-proxy" ]] && [[ -z "${current}" ]]; then
+    set_env_value CODEX_RUNTIME_PROXY_PORT "${runtime_proxy_default_port}"
+    record_env_update "CODEX_RUNTIME_PROXY_PORT" "${runtime_proxy_default_port}"
+  fi
+
+  current="$(read_env_value CODEX_RUNTIME_PROXY_BIND_HOST)"
+  if [[ "${backend}" == "tcp-proxy" ]] && [[ -z "${current}" ]]; then
+    set_env_value CODEX_RUNTIME_PROXY_BIND_HOST "${runtime_proxy_default_bind_host}"
+    record_env_update "CODEX_RUNTIME_PROXY_BIND_HOST" "${runtime_proxy_default_bind_host}"
+  fi
+
   current="$(read_env_value MOCK_AUTO_COMPLETE_LOGIN)"
   if [[ "${backend}" != "mock" ]] && [[ -z "${current}" || "${current}" == "true" ]]; then
     set_env_value MOCK_AUTO_COMPLETE_LOGIN "false"
@@ -445,9 +504,11 @@ cleanup_runtime_proxy_pid_file() {
 }
 
 cleanup_runtime_proxy_socket_file() {
-  local runtime_proxy_socket
-  runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
-  rm -f "${runtime_proxy_socket}"
+  if runtime_proxy_uses_socket; then
+    local runtime_proxy_socket
+    runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+    rm -f "${runtime_proxy_socket}"
+  fi
 }
 
 cleanup_runtime_proxy_launch_script() {
@@ -497,14 +558,33 @@ stop_runtime_proxy_if_running() {
   fi
 }
 
-wait_for_socket() {
-  local socket_path="$1"
+wait_for_runtime_proxy() {
+  local socket_path=""
+  local bind_host=""
+  local probe_host=""
+  local port=""
 
-  echo "[setup] Waiting for host Codex runtime proxy socket at ${socket_path}..."
+  if runtime_proxy_uses_socket; then
+    socket_path="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+    echo "[setup] Waiting for host Codex runtime proxy socket at ${socket_path}..."
+  else
+    bind_host="$(read_runtime_proxy_bind_host)"
+    probe_host="$(runtime_proxy_probe_host "${bind_host}")"
+    port="$(read_runtime_proxy_port)"
+    echo "[setup] Waiting for host Codex runtime proxy tcp endpoint at ${probe_host}:${port}..."
+  fi
+
   for _ in $(seq 1 60); do
-    if runtime_proxy_is_running && [[ -S "${socket_path}" ]] && probe_runtime_proxy_socket "${socket_path}"; then
-      echo "[setup] Host Codex runtime proxy is ready."
-      return
+    if runtime_proxy_uses_socket; then
+      if runtime_proxy_is_running && [[ -S "${socket_path}" ]] && probe_runtime_proxy_socket "${socket_path}"; then
+        echo "[setup] Host Codex runtime proxy is ready."
+        return
+      fi
+    else
+      if runtime_proxy_is_running && probe_runtime_proxy_tcp "${probe_host}" "${port}"; then
+        echo "[setup] Host Codex runtime proxy is ready."
+        return
+      fi
     fi
     sleep 1
   done
@@ -542,6 +622,33 @@ probe_runtime_proxy_socket() {
   ' "${socket_path}" >/dev/null 2>&1
 }
 
+probe_runtime_proxy_tcp() {
+  local host="$1"
+  local port="$2"
+
+  bun -e '
+    const net = require("node:net");
+    const host = process.argv[1];
+    const port = Number(process.argv[2]);
+    const client = net.createConnection({ host, port });
+    const timer = setTimeout(() => {
+      client.destroy();
+      process.exit(1);
+    }, 750);
+
+    client.once("connect", () => {
+      clearTimeout(timer);
+      client.end();
+      process.exit(0);
+    });
+
+    client.once("error", () => {
+      clearTimeout(timer);
+      process.exit(1);
+    });
+  ' "${host}" "${port}" >/dev/null 2>&1
+}
+
 start_runtime_proxy_if_needed() {
   if ! runtime_proxy_enabled; then
     stop_runtime_proxy_if_running
@@ -551,19 +658,39 @@ start_runtime_proxy_if_needed() {
   require_host_bun
   stop_runtime_proxy_if_running
 
-  local runtime_proxy_socket
-  runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
-
   echo "[setup] Starting host Codex runtime proxy..."
-  mkdir -p "${runtime_proxy_dir}" "$(dirname "${runtime_proxy_socket}")" "${repo_root}/.tmp"
+  mkdir -p "${runtime_proxy_dir}" "${repo_root}/.tmp"
+
+  local runtime_proxy_socket=""
+  local runtime_proxy_host=""
+  local runtime_proxy_port=""
+  local runtime_proxy_bind_host=""
+  local runtime_proxy_script="runtime-socket-proxy.js"
+
+  if runtime_proxy_uses_socket; then
+    runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+    mkdir -p "$(dirname "${runtime_proxy_socket}")"
+  else
+    runtime_proxy_host="$(read_runtime_proxy_host)"
+    runtime_proxy_port="$(read_runtime_proxy_port)"
+    runtime_proxy_bind_host="$(read_runtime_proxy_bind_host)"
+    runtime_proxy_script="runtime-tcp-proxy.js"
+  fi
+
   (
     cd "${repo_root}"
     load_env_file
     export WORKSPACE_PATH="${repo_root}"
-    export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
     export BRIDGE_CODEX_HOME="$(resolve_host_codex_home "${BRIDGE_CODEX_HOME:-}")"
     export CODEX_HOME="${BRIDGE_CODEX_HOME}"
     export CODEX_APP_SERVER_BIN="$(resolve_host_codex_bin "${CODEX_APP_SERVER_BIN:-}")"
+    if runtime_proxy_uses_socket; then
+      export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
+    else
+      export CODEX_RUNTIME_PROXY_HOST="${runtime_proxy_host}"
+      export CODEX_RUNTIME_PROXY_PORT="${runtime_proxy_port}"
+      export CODEX_RUNTIME_PROXY_BIND_HOST="${runtime_proxy_bind_host}"
+    fi
     : > "${runtime_proxy_log_file}"
     cat > "${runtime_proxy_launch_script}" <<EOF
 #!/usr/bin/env bash
@@ -571,11 +698,23 @@ set -euo pipefail
 printf '%s\n' "\$\$" > "${runtime_proxy_pid_file}"
 cd "${repo_root}"
 export WORKSPACE_PATH="${repo_root}"
-export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
 export BRIDGE_CODEX_HOME="$(resolve_host_codex_home "${BRIDGE_CODEX_HOME:-}")"
 export CODEX_HOME="${BRIDGE_CODEX_HOME}"
 export CODEX_APP_SERVER_BIN="$(resolve_host_codex_bin "${CODEX_APP_SERVER_BIN:-}")"
-exec bun "${repo_root}/apps/bridge-daemon/dist/runtime-socket-proxy.js" >> "${runtime_proxy_log_file}" 2>&1 < /dev/null
+EOF
+    if runtime_proxy_uses_socket; then
+      cat >> "${runtime_proxy_launch_script}" <<EOF
+export CODEX_RUNTIME_PROXY_SOCKET="${runtime_proxy_socket}"
+EOF
+    else
+      cat >> "${runtime_proxy_launch_script}" <<EOF
+export CODEX_RUNTIME_PROXY_HOST="${runtime_proxy_host}"
+export CODEX_RUNTIME_PROXY_PORT="${runtime_proxy_port}"
+export CODEX_RUNTIME_PROXY_BIND_HOST="${runtime_proxy_bind_host}"
+EOF
+    fi
+    cat >> "${runtime_proxy_launch_script}" <<EOF
+exec bun "${repo_root}/apps/bridge-daemon/dist/${runtime_proxy_script}" >> "${runtime_proxy_log_file}" 2>&1 < /dev/null
 EOF
     chmod +x "${runtime_proxy_launch_script}"
     if command -v setsid >/dev/null 2>&1; then
@@ -586,7 +725,7 @@ EOF
     fi
   )
 
-  wait_for_socket "${runtime_proxy_socket}"
+  wait_for_runtime_proxy
 }
 
 start_workspace_dev() {
@@ -739,11 +878,21 @@ print_summary() {
 EOF
 
   if runtime_proxy_enabled; then
-    local runtime_proxy_socket
-    runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
-    cat <<EOF
+    if runtime_proxy_uses_socket; then
+      local runtime_proxy_socket
+      runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+      cat <<EOF
 - Host Codex runtime proxy: ${runtime_proxy_socket}
 EOF
+    else
+      local runtime_proxy_host
+      local runtime_proxy_port
+      runtime_proxy_host="$(read_runtime_proxy_host)"
+      runtime_proxy_port="$(read_runtime_proxy_port)"
+      cat <<EOF
+- Host Codex runtime proxy: tcp://${runtime_proxy_host}:${runtime_proxy_port}
+EOF
+    fi
   fi
 }
 
@@ -814,15 +963,20 @@ command_status() {
   fi
 
   if runtime_proxy_enabled || [[ -f "${runtime_proxy_pid_file}" ]]; then
-    local runtime_proxy_socket
-    runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
     echo
     if runtime_proxy_is_running; then
       echo "Host Codex runtime proxy: running (pid $(runtime_proxy_pid))"
     else
       echo "Host Codex runtime proxy: stopped"
     fi
-    echo "Socket: ${runtime_proxy_socket}"
+    if runtime_proxy_uses_socket; then
+      local runtime_proxy_socket
+      runtime_proxy_socket="$(resolve_runtime_proxy_socket_host_path "$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)")"
+      echo "Socket: ${runtime_proxy_socket}"
+    else
+      echo "Endpoint: tcp://$(read_runtime_proxy_host):$(read_runtime_proxy_port)"
+      echo "Bind host: $(read_runtime_proxy_bind_host)"
+    fi
     echo "Log file: ${runtime_proxy_log_file}"
   fi
 }
@@ -858,7 +1012,7 @@ case "${command}" in
     command_monitor
     ;;
   *)
-    echo "Usage: scripts/dev-stack.sh [up|down|status|logs|monitor] [stdio|socket-proxy]" >&2
+    echo "Usage: scripts/dev-stack.sh [up|down|status|logs|monitor] [stdio|socket-proxy|tcp-proxy]" >&2
     exit 1
     ;;
 esac

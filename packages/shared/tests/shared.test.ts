@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { loadBridgeConfig, resolveWorkspacePath } from "../src/index";
+import { ensureDir, loadBridgeConfig, resolveWorkspacePath } from "../src/index";
 
 describe("shared config helpers", () => {
   it("preserves POSIX workspace semantics for relative paths", () => {
@@ -57,5 +59,46 @@ describe("shared config helpers", () => {
     assert.equal(config.feishuEncryptKey, "encrypt-key");
     assert.equal(config.feishuDefaultChatId, "oc_xxx");
     assert.equal(config.feishuDefaultChatName, "Bridge Test Group");
+  });
+
+  it("loads tcp proxy runtime settings when present", () => {
+    const config = loadBridgeConfig(
+      {
+        WORKSPACE_PATH: "/workspace/codex-feishu-bridge",
+        CODEX_RUNTIME_BACKEND: "tcp-proxy",
+        CODEX_RUNTIME_PROXY_HOST: "host.docker.internal",
+        CODEX_RUNTIME_PROXY_PORT: "8788",
+        CODEX_RUNTIME_PROXY_BIND_HOST: "0.0.0.0",
+      },
+      "/workspace/codex-feishu-bridge",
+    );
+
+    assert.equal(config.codexBackend, "tcp-proxy");
+    assert.equal(config.codexRuntimeProxyHost, "host.docker.internal");
+    assert.equal(config.codexRuntimeProxyPort, 8788);
+    assert.equal(config.codexRuntimeProxyBindHost, "0.0.0.0");
+  });
+
+  it("loads the omit-CODEX_HOME flag when present", () => {
+    const config = loadBridgeConfig(
+      {
+        WORKSPACE_PATH: "/workspace/codex-feishu-bridge",
+        BRIDGE_OMIT_CODEX_HOME_ENV: "true",
+      },
+      "/workspace/codex-feishu-bridge",
+    );
+
+    assert.equal(config.omitCodexHomeEnv, true);
+  });
+
+  it("tolerates an existing Windows Codex home directory", async () => {
+    const codexHome = path.join(process.env.USERPROFILE ?? "", "OneDrive", "Codex");
+
+    if (process.platform !== "win32" || !existsSync(codexHome)) {
+      return;
+    }
+
+    await ensureDir(codexHome);
+    assert.equal(existsSync(codexHome), true);
   });
 });

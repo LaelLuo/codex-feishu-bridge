@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export type CodexBackendMode = "mock" | "stdio" | "socket-proxy";
+export type CodexBackendMode = "mock" | "stdio" | "socket-proxy" | "tcp-proxy";
 
 export interface Logger {
   info(message: string, metadata?: unknown): void;
@@ -20,8 +20,12 @@ export interface BridgeConfig {
   uploadsDir: string;
   codexBackend: CodexBackendMode;
   codexRuntimeProxySocket: string;
+  codexRuntimeProxyHost: string;
+  codexRuntimeProxyPort: number;
+  codexRuntimeProxyBindHost: string;
   codexExecutable: string;
   codexArgs: string[];
+  omitCodexHomeEnv: boolean;
   publicBaseUrl?: string;
   mockAutoCompleteLogin: boolean;
   feishuBaseUrl: string;
@@ -109,11 +113,15 @@ export function loadBridgeConfig(
       workspaceRoot,
       env.CODEX_RUNTIME_PROXY_SOCKET ?? path.join(".tmp", "codex-runtime-proxy.sock"),
     ),
+    codexRuntimeProxyHost: env.CODEX_RUNTIME_PROXY_HOST ?? "127.0.0.1",
+    codexRuntimeProxyPort: Number(env.CODEX_RUNTIME_PROXY_PORT ?? "8788"),
+    codexRuntimeProxyBindHost: env.CODEX_RUNTIME_PROXY_BIND_HOST ?? "127.0.0.1",
     codexExecutable: env.CODEX_APP_SERVER_BIN ?? "codex",
     codexArgs: (env.CODEX_APP_SERVER_ARGS ?? "app-server")
       .split(" ")
       .map((segment) => segment.trim())
       .filter(Boolean),
+    omitCodexHomeEnv: parseBoolean(env.BRIDGE_OMIT_CODEX_HOME_ENV, false),
     publicBaseUrl: env.PUBLIC_BASE_URL,
     mockAutoCompleteLogin: parseBoolean(env.MOCK_AUTO_COMPLETE_LOGIN, true),
     feishuBaseUrl: env.FEISHU_BASE_URL ?? "https://open.feishu.cn",
@@ -127,7 +135,19 @@ export function loadBridgeConfig(
 }
 
 export async function ensureDir(targetDir: string): Promise<void> {
-  await mkdir(targetDir, { recursive: true });
+  try {
+    await mkdir(targetDir, { recursive: true });
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code !== "EEXIST") {
+      throw error;
+    }
+
+    const targetStat = await stat(targetDir);
+    if (!targetStat.isDirectory()) {
+      throw error;
+    }
+  }
 }
 
 export async function prepareBridgeDirectories(config: BridgeConfig): Promise<void> {

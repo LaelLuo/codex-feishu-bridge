@@ -77,7 +77,7 @@ export function spawnCodexProcess(config: BridgeConfig): ManagedCodexProcess {
       cwd: config.workspaceRoot,
       env: {
         ...process.env,
-        CODEX_HOME: config.codexHome,
+        ...(config.omitCodexHomeEnv ? {} : { CODEX_HOME: config.codexHome }),
       },
       stdio: "pipe",
     });

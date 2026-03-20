@@ -83,23 +83,40 @@ If your current shell already exports these Feishu variables, the script also pe
 - `FEISHU_DEFAULT_CHAT_ID`
 - `FEISHU_DEFAULT_CHAT_NAME`
 
-### 2. Host-visibility one-click startup: `socket-proxy`
+### 2. Host-native startup: `start:host`
+
+If you want to skip Docker entirely and run both `bridge-daemon` and `codex app-server` on the host, run:
+
+```bash
+bun run start:host
+```
+
+This entry reuses `docker/.env`, rewrites container-style paths back to host paths, and defaults to host-native `stdio`.
+
+- It no longer forces a project-local `.tmp/codex-home` by default
+- It no longer injects `CODEX_HOME` into the local child process unless you explicitly set `BRIDGE_CODEX_HOME` or `CODEX_HOME`
+- It no longer treats a synced or linked directory such as `OneDrive\Codex` as the implicit runtime home
+
+### 3. Host-visibility one-click startup: `tcp-proxy` / `socket-proxy`
 
 If you need the "start a full-access thread in the host CLI first, then import and bind it to Feishu" path, run:
 
 ```bash
-./scripts/dev-stack.sh monitor socket-proxy
+./scripts/dev-stack.sh monitor tcp-proxy
 ```
 
 or:
 
 ```bash
-bun run monitor:socket-proxy
+bun run monitor:tcp-proxy
 ```
 
-This path also auto-fills `docker/.env` and switches the runtime-specific fields to `socket-proxy`.
+This path also auto-fills `docker/.env` and switches the runtime-specific fields to a proxy backend.
 
-### 3. If needed, only fill the Feishu fields
+- Prefer `tcp-proxy` for Windows host + Linux container setups
+- Keep `socket-proxy` for Unix / Unix-socket-native environments
+
+### 4. If needed, only fill the Feishu fields
 
 Edit `docker/.env` and usually just confirm:
 
@@ -111,15 +128,15 @@ FEISHU_DEFAULT_CHAT_NAME=your Feishu group name
 
 If you already know the chat id, you can use `FEISHU_DEFAULT_CHAT_ID=oc_xxx` instead.
 
-### 4. Confirm the Feishu prerequisites
+### 5. Confirm the Feishu prerequisites
 
 - the bot is already in the target group
 - the target group has topic mode enabled in group settings
 - the Feishu app has enabled `im.message.receive_v1` and `card.action.trigger`
 
-### 5. What the two Docker-host permission modes mean
+### 5. What the three runtime modes mean
 
-Both modes keep `bridge-daemon` inside Docker. The difference is where later turns execute.
+Use these three modes as the mental model:
 
 The script auto-fills these shared values too; if you want to verify them manually, look at:
 
@@ -128,7 +145,20 @@ HOST_CODEX_HOME=/home/you/.codex
 HOST_CODEX_BIN_DIR=/path/to/codex-package
 ```
 
-Mode A: `stdio`
+Mode A: `host-native`
+
+- no Docker
+- both `bridge-daemon` and `codex app-server` run on the host
+- best when you want direct host file visibility with the least indirection
+- does not export `CODEX_HOME` by default, so local Codex keeps its normal default-home behavior
+- does not silently switch to a synced directory such as `OneDrive\Codex`
+- only uses an explicit runtime home when you set `BRIDGE_CODEX_HOME` / `CODEX_HOME`
+
+```bash
+bun run start:host
+```
+
+Mode B: `stdio`
 
 - recommended default for most users
 - best for normal bridge tasks, fresh Feishu tasks, and desktop takeover
@@ -140,11 +170,20 @@ CODEX_RUNTIME_BACKEND=stdio
 CODEX_APP_SERVER_BIN=/opt/host-codex-bin/bin/codex.js
 ```
 
-Mode B: `socket-proxy`
+Mode C: `tcp-proxy` / `socket-proxy`
 
 - best when you started a full-access thread in the host CLI first, then imported and bound it to Feishu later
 - keeps the real executing `codex app-server` on the host side, so later turns keep the host file visibility
 - Docker still owns the daemon, Feishu bridge, HTTP, and WebSocket surfaces
+
+```env
+CODEX_RUNTIME_BACKEND=tcp-proxy
+CODEX_RUNTIME_PROXY_HOST=host.docker.internal
+CODEX_RUNTIME_PROXY_PORT=8788
+CODEX_RUNTIME_PROXY_BIND_HOST=0.0.0.0
+```
+
+If you are on a Unix-socket-native setup, `socket-proxy` is still available:
 
 ```env
 CODEX_RUNTIME_BACKEND=socket-proxy
@@ -203,16 +242,21 @@ The root script [scripts/dev-stack.sh](../scripts/dev-stack.sh) exposes:
 If you want to force a specific runtime mode, you can also run:
 
 ```bash
+bun run start:host
 ./scripts/dev-stack.sh monitor stdio
+./scripts/dev-stack.sh monitor tcp-proxy
 ./scripts/dev-stack.sh monitor socket-proxy
 ```
 
 Matching Bun wrappers are available too:
 
 ```bash
+bun run start:host
 bun run start:stdio
+bun run start:tcp-proxy
 bun run start:socket-proxy
 bun run monitor:stdio
+bun run monitor:tcp-proxy
 bun run monitor:socket-proxy
 ```
 
@@ -221,13 +265,29 @@ It also auto-opens the monitor in the Extension Development Host.
 
 ## Manual Path
 
-For real `stdio` and Feishu runs, or if you want full manual control, prefer calling `docker compose` directly with `--env-file docker/.env`.
+If you want to skip Docker entirely, prefer `bun run start:host`.
+
+For real Docker `stdio` / `tcp-proxy` and Feishu runs, or if you want full manual control, prefer calling `docker compose` directly with `--env-file docker/.env`.
 
 ## Runtime and Validation
 
-This section expands the same two Docker-host permission modes from Quick Start.
+This section expands the same runtime modes from Quick Start.
 
-Mode A: `stdio`
+Mode A: `host-native`
+
+```bash
+bun run start:host
+```
+
+Use it when:
+
+- you want direct host file visibility with no Docker indirection
+- you are deploying on Windows or another workstation where host-native Bun is acceptable
+- you want the simplest path for local `codex app-server` behavior
+- you do not want bridge to force a project-local `.tmp/codex-home`
+- you do not want bridge to derive the default runtime home from a linked directory such as `OneDrive\Codex`
+
+Mode B: `stdio`
 
 ```bash
 HOST_CODEX_HOME=/home/you/.codex
@@ -243,7 +303,20 @@ Use it when:
 - you want the Docker-side daemon to manage the real `codex app-server`
 - you are on the default path and do not need imported host threads to preserve host-only file visibility
 
-Mode B: `socket-proxy`
+Mode C: `tcp-proxy`
+
+```bash
+HOST_CODEX_HOME=/home/you/.codex
+HOST_CODEX_BIN_DIR=/path/to/codex-package
+CODEX_RUNTIME_BACKEND=tcp-proxy
+CODEX_RUNTIME_PROXY_HOST=host.docker.internal
+CODEX_RUNTIME_PROXY_PORT=8788
+CODEX_RUNTIME_PROXY_BIND_HOST=0.0.0.0
+```
+
+This is the recommended proxy mode for Windows host + Linux container deployments.
+
+Mode D: `socket-proxy`
 
 ```bash
 HOST_CODEX_HOME=/home/you/.codex
@@ -468,7 +541,7 @@ Slash commands remain available as compatibility fallbacks, but card interaction
 - The daemon now exposes `/tasks`, `/tasks/import`, `/tasks/:id/resume`, `/tasks/:id/messages`, `/tasks/:id/uploads`, `/tasks/:id/approvals/*`, and `/feishu/webhook`.
 - The daemon persists task state under `.tmp/` and reconciles recovered tasks on restart.
 - Live runtime validation should prefer `CODEX_RUNTIME_BACKEND=stdio` so the daemon manages the real `codex app-server` process directly.
-- For imported host threads that must keep host path visibility after Feishu binding, prefer `CODEX_RUNTIME_BACKEND=socket-proxy`.
+- For imported host threads that must keep host path visibility after Feishu binding, prefer `CODEX_RUNTIME_BACKEND=tcp-proxy` on Windows host + Linux container setups, and keep `socket-proxy` for Unix-socket-native environments.
 - Reusing a host login state in Docker uses `HOST_CODEX_HOME -> /codex-home`.
 - Reusing a host Codex executable in Docker uses `HOST_CODEX_BIN_DIR -> /opt/host-codex-bin`.
 - `bun run validate:runtime` is read-only by default.

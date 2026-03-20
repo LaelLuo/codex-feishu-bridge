@@ -134,7 +134,7 @@ export interface CodexModelDescriptor {
 }
 
 export interface CodexRuntimeHealth {
-  backend: "mock" | "stdio" | "socket-proxy";
+  backend: "mock" | "stdio" | "socket-proxy" | "tcp-proxy";
   connected: boolean;
   initialized: boolean;
 }
@@ -146,7 +146,7 @@ export interface CodexRuntimeNotification {
 }
 
 export interface CodexRuntime {
-  readonly backend: "mock" | "stdio" | "socket-proxy";
+  readonly backend: "mock" | "stdio" | "socket-proxy" | "tcp-proxy";
   start(): Promise<void>;
   health(): Promise<CodexRuntimeHealth>;
   loginStart(params: CodexLoginStartParams): Promise<CodexLoginStartResult>;
