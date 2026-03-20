@@ -30,7 +30,7 @@ Common mobile scenarios include:
 ## Highlights
 
 - CLI-first runtime with `codex app-server`
-- Docker-first TypeScript development workflow
+- Docker-first Bun + TypeScript development workflow
 - VSCode monitor editor tab, task highlighting, diff view, approvals, and desktop handoff messaging
 - Feishu long-connection bridge with pure-thread conversations
 - Card-first Feishu task creation and control

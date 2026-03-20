@@ -5,7 +5,7 @@
 - `Codex CLI + codex app-server` 是真实运行后端
 - VSCode 扩展是桌面图形前端，不是运行真身
 - Feishu 是手机端线程和远程控制入口
-- Docker 是默认的 Node and TypeScript 开发环境
+- Docker 是默认的 Bun and TypeScript 开发环境
 
 ## 四层拓扑
 
@@ -151,11 +151,12 @@
 
 - Compose services stay `workspace-dev` and `bridge-runtime`
 - Devcontainer default workspace stays `/workspace/codex-feishu-bridge`
+- Default dev image is the official `oven/bun` base, and the devcontainer connects as the `bun` user
 - `bridge-runtime` mounts a shared Codex home path and an uploads directory
 - `bridge-runtime` can also mount `${HOST_CODEX_HOME}` to `/codex-home` and `${HOST_CODEX_BIN_DIR}` to `/opt/host-codex-bin`
 - Live `stdio` validation should set `BRIDGE_CODEX_HOME=/codex-home`, `CODEX_RUNTIME_BACKEND=stdio`, and `CODEX_APP_SERVER_BIN=/opt/host-codex-bin/bin/codex.js`
 - `socket-proxy` validation should keep `bridge-daemon` in Docker, set `CODEX_RUNTIME_BACKEND=socket-proxy`, and let the host sidecar expose `codex app-server` through `.tmp/codex-runtime-proxy.sock`
-- Host-native Node and TypeScript are optional; container is the default path
+- Host-native Bun and TypeScript are optional; container is the default path
 
 ## 代码规范
 

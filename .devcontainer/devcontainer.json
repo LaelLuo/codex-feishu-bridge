@@ -6,7 +6,7 @@
   "service": "workspace-dev",
   "workspaceFolder": "/workspace/codex-feishu-bridge",
   "shutdownAction": "stopCompose",
-  "remoteUser": "node",
+  "remoteUser": "bun",
   "customizations": {
     "vscode": {
       "settings": {

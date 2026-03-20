@@ -225,7 +225,7 @@ bun run stop:all
 ### 核心特性
 
 - 基于 `codex app-server` 的 CLI-first 运行时
-- Docker-first 的 TypeScript 开发方式
+- Docker-first 的 Bun + TypeScript 开发方式
 - VSCode 常驻监视器视图、任务树高亮、diff 查看、审批与桌面接管输入
 - 飞书 long-connection 接入
 - 飞书 card-first 任务创建与控制

@@ -15,6 +15,8 @@ const workspacePackageJsonPaths = [
   path.join(repoRoot, "apps", "vscode-extension", "package.json"),
 ];
 const composePath = path.join(repoRoot, "docker", "compose.yaml");
+const envExamplePath = path.join(repoRoot, "docker", ".env.example");
+const devcontainerPath = path.join(repoRoot, ".devcontainer", "devcontainer.json");
 const devStackPath = path.join(repoRoot, "scripts", "dev-stack.sh");
 const dockerfilePath = path.join(repoRoot, "docker", "images", "dev.Dockerfile");
 const bridgeCliPath = path.join(repoRoot, "scripts", "bridge-cli.mjs");
@@ -79,6 +81,8 @@ describe("bun-first workflow", () => {
     const devStack = await readFile(devStackPath, "utf8");
     const compose = await readFile(composePath, "utf8");
     const dockerfile = await readFile(dockerfilePath, "utf8");
+    const envExample = await readFile(envExamplePath, "utf8");
+    const devcontainer = JSON.parse(await readFile(devcontainerPath, "utf8"));
 
     assert.equal(devStack.includes("npm install"), false);
     assert.equal(devStack.includes("npm run"), false);
@@ -87,7 +91,16 @@ describe("bun-first workflow", () => {
     assert.match(devStack, /\bbun run\b/);
 
     assert.match(compose, /command:\s+bun run/);
-    assert.match(dockerfile, /\bbun\b/i);
+    assert.equal(compose.includes("NODE_IMAGE"), false);
+    assert.match(compose, /BUN_IMAGE:/);
+    assert.equal(envExample.includes("NODE_IMAGE="), false);
+    assert.match(envExample, /^BUN_IMAGE=/m);
+    assert.equal(devcontainer.remoteUser, "bun", "unexpected devcontainer user");
+    assert.equal(dockerfile.includes("ARG NODE_IMAGE="), false);
+    assert.equal(dockerfile.includes("ARG BUN_VERSION="), false);
+    assert.match(dockerfile, /ARG BUN_IMAGE=/);
+    assert.match(dockerfile, /FROM \$\{BUN_IMAGE\}/);
+    assert.equal(dockerfile.includes("curl -fsSL https://bun.sh/install"), false);
   });
 
   it("keeps helper CLIs aligned with bun-first usage", async () => {

@@ -5,8 +5,7 @@ x-dev-base: &dev-base
     context: ..
     dockerfile: docker/images/dev.Dockerfile
     args:
-      NODE_IMAGE: ${NODE_IMAGE:-node:20-bookworm}
-      BUN_VERSION: ${BUN_VERSION:-1.3.11}
+      BUN_IMAGE: ${BUN_IMAGE:-oven/bun:1.3.11}
   image: ${DEV_IMAGE_NAME:-codex-feishu-bridge-dev:local}
   entrypoint:
     - tini

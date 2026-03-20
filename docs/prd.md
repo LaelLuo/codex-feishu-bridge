@@ -20,7 +20,7 @@
 - 运行时桥接：通过 `codex app-server` 暴露认证、线程、turn、审批和事件流
 - 多模态支持：桌面端支持本地图片输入并将其转成 Codex 本地图片资产
 - 手工 CLI 接管：允许导入和恢复用户手工运行产生的 Codex 线程
-- Docker-first 开发：Node、TypeScript 和 bridge runtime 默认在 Docker 内运行
+- Docker-first 开发：Bun、TypeScript 和 bridge runtime 默认在 Docker 内运行
 
 ## 非目标
 
