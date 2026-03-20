@@ -14,6 +14,23 @@ const dockerfilePath = path.join(repoRoot, "docker", "images", "dev.Dockerfile")
 const bridgeCliPath = path.join(repoRoot, "scripts", "bridge-cli.mjs");
 const liveRuntimeCheckPath = path.join(repoRoot, "scripts", "live-runtime-check.mjs");
 const hubCliPath = path.join(repoRoot, "scripts", "hub-cli.mjs");
+const hubCliIntegrationTestPath = path.join(repoRoot, "tests", "integration", "hub-cli.test.mjs");
+const fakeAppServerFixturePath = path.join(
+  repoRoot,
+  "apps",
+  "bridge-daemon",
+  "tests",
+  "fixtures",
+  "fake-codex-app-server.mjs",
+);
+const mockCodexRuntimePath = path.join(
+  repoRoot,
+  "apps",
+  "bridge-daemon",
+  "src",
+  "runtime",
+  "mock-codex-runtime.ts",
+);
 
 async function pathExists(targetPath) {
   try {
@@ -70,5 +87,18 @@ describe("bun-first workflow", () => {
       assert.equal(script.includes("node scripts/"), false);
       assert.equal(script.includes("Use `node scripts/"), false);
     }
+  });
+
+  it("keeps test helpers and mock runtime aligned with bun-first defaults", async () => {
+    const [hubCliIntegrationTest, fakeAppServerFixture, mockCodexRuntime] = await Promise.all([
+      readFile(hubCliIntegrationTestPath, "utf8"),
+      readFile(fakeAppServerFixturePath, "utf8"),
+      readFile(mockCodexRuntimePath, "utf8"),
+    ]);
+
+    assert.match(hubCliIntegrationTest, /execFileAsync\("bun",/);
+    assert.match(fakeAppServerFixture, /^#!\/usr\/bin\/env bun/m);
+    assert.equal(mockCodexRuntime.includes('["npm", "test"]'), false);
+    assert.match(mockCodexRuntime, /\["bun", "test"\]/);
   });
 });

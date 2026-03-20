@@ -19,7 +19,7 @@ async function runHub(args, options = {}) {
     CODEX_FEISHU_BRIDGE_HUB_ROOT: options.hubRoot ?? path.join(tempRoot, "hub"),
     CODEX_HUB_AGENT: options.agent,
   };
-  const { stdout, stderr } = await execFileAsync("node", [scriptPath, ...args], {
+  const { stdout, stderr } = await execFileAsync("bun", [scriptPath, ...args], {
     cwd: options.cwd ?? repoRoot,
     env,
   });

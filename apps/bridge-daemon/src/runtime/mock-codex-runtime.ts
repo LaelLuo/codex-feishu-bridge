@@ -472,7 +472,7 @@ export class MockCodexRuntime implements CodexRuntime {
         id: commandItemId,
         type: "commandExecution",
         status: "inProgress",
-        command: ["npm", "test"],
+        command: ["bun", "test"],
         cwd: threadState.descriptor.cwd ?? this.config.workspaceRoot,
       };
       turnState.turn.items?.push(commandItem);
@@ -498,7 +498,7 @@ export class MockCodexRuntime implements CodexRuntime {
           turnId,
           requestId,
           reason: "Run the requested command?",
-          command: ["npm", "test"],
+          command: ["bun", "test"],
           cwd: commandItem.cwd,
         },
         requestId,
