@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 const baseUrl = process.env.BRIDGE_BASE_URL ?? "http://127.0.0.1:8787";
 const [command = "help", ...args] = process.argv.slice(2);
@@ -24,10 +24,10 @@ function printUsage() {
   console.log(`codex-feishu-bridge CLI
 
 Usage:
-  node scripts/bridge-cli.mjs list
-  node scripts/bridge-cli.mjs import [threadId]
-  node scripts/bridge-cli.mjs resume <taskId>
-  node scripts/bridge-cli.mjs send <taskId> <message>
+  bun scripts/bridge-cli.mjs list
+  bun scripts/bridge-cli.mjs import [threadId]
+  bun scripts/bridge-cli.mjs resume <taskId>
+  bun scripts/bridge-cli.mjs send <taskId> <message>
 `);
 }
 

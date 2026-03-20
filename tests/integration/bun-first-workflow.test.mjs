@@ -11,6 +11,9 @@ const packageLockPath = path.join(repoRoot, "package-lock.json");
 const composePath = path.join(repoRoot, "docker", "compose.yaml");
 const devStackPath = path.join(repoRoot, "scripts", "dev-stack.sh");
 const dockerfilePath = path.join(repoRoot, "docker", "images", "dev.Dockerfile");
+const bridgeCliPath = path.join(repoRoot, "scripts", "bridge-cli.mjs");
+const liveRuntimeCheckPath = path.join(repoRoot, "scripts", "live-runtime-check.mjs");
+const hubCliPath = path.join(repoRoot, "scripts", "hub-cli.mjs");
 
 async function pathExists(targetPath) {
   try {
@@ -53,5 +56,19 @@ describe("bun-first workflow", () => {
 
     assert.match(compose, /command:\s+bun run/);
     assert.match(dockerfile, /\bbun\b/i);
+  });
+
+  it("keeps helper CLIs aligned with bun-first usage", async () => {
+    const helperScripts = await Promise.all([
+      readFile(bridgeCliPath, "utf8"),
+      readFile(liveRuntimeCheckPath, "utf8"),
+      readFile(hubCliPath, "utf8"),
+    ]);
+
+    for (const script of helperScripts) {
+      assert.match(script, /^#!\/usr\/bin\/env bun/m);
+      assert.equal(script.includes("node scripts/"), false);
+      assert.equal(script.includes("Use `node scripts/"), false);
+    }
   });
 });

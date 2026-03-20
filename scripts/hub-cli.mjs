@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { randomUUID } from "node:crypto";
 import { readFile, mkdir, rm, stat, writeFile, appendFile, readdir } from "node:fs/promises";
@@ -47,15 +47,15 @@ function printUsage() {
   console.log(`codex-feishu-bridge hub CLI
 
 Usage:
-  node scripts/hub-cli.mjs init [--hub-root PATH]
-  node scripts/hub-cli.mjs post --from AGENT --to AGENT --kind KIND --summary TEXT [--body TEXT | --body-file FILE] [--thread THREAD_ID]
-  node scripts/hub-cli.mjs broadcast --from AGENT --summary TEXT [--body TEXT | --body-file FILE]
-  node scripts/hub-cli.mjs read [--agent AGENT] [--thread THREAD_ID] [--broadcast]
-  node scripts/hub-cli.mjs ack --agent AGENT --thread THREAD_ID --summary TEXT [--body TEXT | --body-file FILE]
-  node scripts/hub-cli.mjs done --agent AGENT --thread THREAD_ID --summary TEXT [--body TEXT | --body-file FILE]
-  node scripts/hub-cli.mjs status [--agent AGENT]
-  node scripts/hub-cli.mjs doctor
-  node scripts/hub-cli.mjs render [--agent AGENT]
+  bun scripts/hub-cli.mjs init [--hub-root PATH]
+  bun scripts/hub-cli.mjs post --from AGENT --to AGENT --kind KIND --summary TEXT [--body TEXT | --body-file FILE] [--thread THREAD_ID]
+  bun scripts/hub-cli.mjs broadcast --from AGENT --summary TEXT [--body TEXT | --body-file FILE]
+  bun scripts/hub-cli.mjs read [--agent AGENT] [--thread THREAD_ID] [--broadcast]
+  bun scripts/hub-cli.mjs ack --agent AGENT --thread THREAD_ID --summary TEXT [--body TEXT | --body-file FILE]
+  bun scripts/hub-cli.mjs done --agent AGENT --thread THREAD_ID --summary TEXT [--body TEXT | --body-file FILE]
+  bun scripts/hub-cli.mjs status [--agent AGENT]
+  bun scripts/hub-cli.mjs doctor
+  bun scripts/hub-cli.mjs render [--agent AGENT]
 
 Environment:
   CODEX_FEISHU_BRIDGE_HUB_ROOT  Override the shared hub directory
@@ -491,7 +491,7 @@ This directory is the shared communication hub for the multi-agent worktree work
 
 Rules:
 
-1. Do not hand-edit \`jsonl\` files. Use \`node scripts/hub-cli.mjs ...\`.
+1. Do not hand-edit \`jsonl\` files. Use \`bun scripts/hub-cli.mjs ...\`.
 2. Treat mailbox and broadcast files as append-only logs.
 3. Use repository docs for stable architecture and status, not for live mailbox traffic.
 4. Read your own mailbox view before each work round.

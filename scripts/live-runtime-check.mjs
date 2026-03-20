@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 const baseUrl = process.env.BRIDGE_BASE_URL ?? "http://127.0.0.1:8787";
 const args = process.argv.slice(2);
@@ -78,12 +78,12 @@ function printUsage() {
   console.log(`codex-feishu-bridge live runtime check
 
 Usage:
-  node scripts/live-runtime-check.mjs
-  node scripts/live-runtime-check.mjs --create-thread
-  node scripts/live-runtime-check.mjs --exercise-turns
-  node scripts/live-runtime-check.mjs --create-thread --exercise-turns
-  node scripts/live-runtime-check.mjs --create-thread --workspace-root /workspace/codex-feishu-bridge
-  node scripts/live-runtime-check.mjs --create-thread --title "Live validation task"
+  bun scripts/live-runtime-check.mjs
+  bun scripts/live-runtime-check.mjs --create-thread
+  bun scripts/live-runtime-check.mjs --exercise-turns
+  bun scripts/live-runtime-check.mjs --create-thread --exercise-turns
+  bun scripts/live-runtime-check.mjs --create-thread --workspace-root /workspace/codex-feishu-bridge
+  bun scripts/live-runtime-check.mjs --create-thread --title "Live validation task"
 
 Notes:
   - Default mode is read-only and does not create a thread.
