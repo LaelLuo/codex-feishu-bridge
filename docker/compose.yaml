@@ -46,7 +46,7 @@ x-dev-base: &dev-base
       target: /opt/host-workspaces
       read_only: true
     - type: volume
-      source: workspace-node-modules
+      source: workspace-deps
       target: ${WORKSPACE_PATH:-/workspace/codex-feishu-bridge}/node_modules
     - type: volume
       source: bun-cache
@@ -76,5 +76,5 @@ services:
       - "${BRIDGE_PORT:-8787}:${BRIDGE_PORT:-8787}"
 
 volumes:
-  workspace-node-modules:
+  workspace-deps:
   bun-cache:

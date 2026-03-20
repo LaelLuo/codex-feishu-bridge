@@ -63,6 +63,7 @@ describe("bun-first workflow", () => {
     const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
 
     assert.match(packageJson.packageManager, /^bun@/);
+    assert.equal(packageJson.engines?.node, undefined);
     assert.equal(await pathExists(bunLockPath), true);
     assert.equal(await pathExists(packageLockPath), false);
   });
@@ -98,6 +99,8 @@ describe("bun-first workflow", () => {
 
     assert.match(compose, /command:\s+bun run/);
     assert.equal(compose.includes("NODE_IMAGE"), false);
+    assert.equal(compose.includes("workspace-node-modules"), false);
+    assert.match(compose, /workspace-deps:/);
     assert.match(compose, /BUN_IMAGE:/);
     assert.equal(envExample.includes("NODE_IMAGE="), false);
     assert.match(envExample, /^BUN_IMAGE=/m);

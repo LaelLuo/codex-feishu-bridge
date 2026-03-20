@@ -8,9 +8,6 @@
     "apps/*",
     "packages/*"
   ],
-  "engines": {
-    "node": ">=20.0.0"
-  },
   "scripts": {
     "start:all": "bash ./scripts/dev-stack.sh up",
     "start:stdio": "bash ./scripts/dev-stack.sh up stdio",
