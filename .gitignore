@@ -5,6 +5,8 @@ coverage/
 .DS_Store
 *.log
 npm-debug.log*
+.playwright-cli/
+output/playwright/
 
 docker/.env
 
