@@ -69,6 +69,61 @@ describe("feishu card builders", () => {
     }
   });
 
+  it("serializes card action revision values as strings for Feishu compatibility", () => {
+    const card = createDraftCard({
+      prompt: "Inspect the current bridge task state.",
+      model: "gpt-5.4",
+      effort: "high",
+      planMode: true,
+      sandbox: "workspace-write",
+      approvalPolicy: "on-request",
+      binding: BINDING,
+      revision: 3,
+      attachmentSummary: "1 photo",
+      modelOptions: [
+        {
+          id: "gpt-5.4",
+          displayName: "GPT-5.4",
+          isDefault: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          defaultReasoningEffort: "medium",
+        },
+      ],
+    });
+
+    const json = JSON.stringify(card);
+    assert.match(json, /"revision":"3"/);
+    assert.doesNotMatch(json, /"revision":3/);
+  });
+
+  it("serializes select initial_option values as strings for Feishu compatibility", () => {
+    const card = createDraftCard({
+      prompt: "Inspect the current bridge task state.",
+      model: "gpt-5.4",
+      effort: "high",
+      planMode: true,
+      sandbox: "workspace-write",
+      approvalPolicy: "on-request",
+      binding: BINDING,
+      revision: 3,
+      attachmentSummary: "1 photo",
+      modelOptions: [
+        {
+          id: "gpt-5.4",
+          displayName: "GPT-5.4",
+          isDefault: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          defaultReasoningEffort: "medium",
+        },
+      ],
+    });
+
+    const json = JSON.stringify(card);
+    assert.match(json, /"initial_option":"workspace-write"/);
+    assert.match(json, /"initial_option":"on-request"/);
+    assert.doesNotMatch(json, /"initial_option":\{"text"/);
+  });
+
   it("renders concise draft and bound-task cards with the key controls intact", () => {
     const draftCard = createDraftCard({
       prompt: "Inspect the current bridge task state.",

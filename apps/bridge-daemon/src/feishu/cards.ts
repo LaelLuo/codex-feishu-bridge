@@ -135,8 +135,12 @@ export interface FeishuCardActionValue {
   taskId?: string;
   requestId?: string;
   queuedMessageId?: string;
-  revision?: number;
+  revision?: string | number;
 }
+
+type FeishuCardActionValueExtras = Partial<Omit<FeishuCardActionValue, "kind" | "chatId" | "threadKey" | "rootMessageId">> & {
+  revision?: number | string;
+};
 
 function plainText(content: string): { tag: "plain_text"; content: string } {
   return {
@@ -229,14 +233,11 @@ function selectStatic(params: {
     text: plainText(option.label),
     value: option.value,
   }));
-  const initialOptionObject = serializedOptions.find((option) => option.value === (params.initialOption ?? ""));
 
   return {
     tag: "select_static",
     placeholder: plainText(params.placeholder),
-    ...(params.initialOption !== undefined
-      ? { initial_option: initialOptionObject ?? params.initialOption }
-      : {}),
+    ...(params.initialOption !== undefined ? { initial_option: params.initialOption } : {}),
     // Some Feishu clients and SDK references disagree on whether the field is
     // `option` or `options`. Emit both so mobile clients always receive the
     // candidate list.
@@ -413,14 +414,16 @@ function taskStartGuidance(task: BridgeTask): string[] {
 function baseActionValue(
   kind: FeishuCardActionKind,
   binding: FeishuThreadBinding,
-  extras: Partial<Omit<FeishuCardActionValue, "kind" | "chatId" | "threadKey" | "rootMessageId">> = {},
+  extras: FeishuCardActionValueExtras = {},
 ): FeishuCardActionValue {
+  const { revision, ...rest } = extras;
   return {
     kind,
     chatId: binding.chatId,
     threadKey: binding.threadKey,
     ...(binding.rootMessageId ? { rootMessageId: binding.rootMessageId } : {}),
-    ...extras,
+    ...rest,
+    ...(revision !== undefined ? { revision: String(revision) } : {}),
   };
 }
 
@@ -466,7 +469,7 @@ function buildApprovalActionRows(task: BridgeTask, binding: FeishuThreadBinding,
 export function createCardActionValue(
   kind: FeishuCardActionKind,
   binding: FeishuThreadBinding,
-  extras?: Partial<Omit<FeishuCardActionValue, "kind" | "chatId" | "threadKey" | "rootMessageId">>,
+  extras?: FeishuCardActionValueExtras,
 ): FeishuCardActionValue {
   return baseActionValue(kind, binding, extras);
 }
