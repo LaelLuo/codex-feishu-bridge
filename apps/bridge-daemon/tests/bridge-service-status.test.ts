@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { describe, it } from "node:test";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { DatabaseSync } from "node:sqlite";
+import { Database } from "bun:sqlite";
 
 import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bridge/shared";
 import type { ApprovalPolicy } from "@codex-feishu-bridge/protocol";
@@ -44,7 +44,7 @@ function writeThreadStateRow(
     approvalMode?: string;
   },
 ): void {
-  const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+  const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
   stateDb.exec(`
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
@@ -519,7 +519,7 @@ describe("bridge service runtime status mapping", () => {
       "utf8",
     );
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,
@@ -793,7 +793,7 @@ describe("bridge service runtime status mapping", () => {
     }
     await writeFile(rolloutDiskPath, `${rolloutLines.join("\n")}\n`, "utf8");
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,
@@ -873,7 +873,7 @@ describe("bridge service runtime status mapping", () => {
       },
     ]);
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,
@@ -1016,7 +1016,7 @@ describe("bridge service runtime status mapping", () => {
       },
     ]);
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,
@@ -1167,7 +1167,7 @@ describe("bridge service runtime status mapping", () => {
       },
     ]);
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,
@@ -1868,7 +1868,7 @@ describe("bridge service runtime status mapping", () => {
     const logger = createConsoleLogger("bridge-service-import-missing-rollout-test");
     await prepareBridgeDirectories(config);
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,

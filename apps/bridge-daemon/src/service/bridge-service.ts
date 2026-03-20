@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createReadStream, existsSync } from "node:fs";
@@ -55,6 +54,25 @@ const AGENT_DIFF_SUMMARY = "Extracted from agent diff block";
 const MIRRORED_ROLLOUT_DUPLICATE_WINDOW_MS = 50;
 const SANDBOX_MODE_VALUES: readonly SandboxMode[] = ["read-only", "workspace-write", "danger-full-access"];
 const APPROVAL_POLICY_VALUES: readonly ApprovalPolicy[] = ["untrusted", "on-failure", "on-request", "never"];
+type SqliteParam = string | number | null;
+type SqliteRow = Record<string, SqliteParam>;
+
+interface SqliteStatement<T extends SqliteRow = SqliteRow> {
+  all(...params: SqliteParam[]): T[];
+  get(...params: SqliteParam[]): T | null;
+  run(...params: SqliteParam[]): unknown;
+}
+
+interface SqliteDatabaseHandle {
+  exec(sql: string): void;
+  prepare<T extends SqliteRow = SqliteRow>(sql: string): SqliteStatement<T>;
+  query<T extends SqliteRow = SqliteRow>(sql: string): SqliteStatement<T>;
+  close(): void;
+}
+
+const { Database: BunSqliteDatabase } = require("bun:sqlite") as {
+  Database: new (path: string) => SqliteDatabaseHandle;
+};
 
 interface PersistedState {
   seq: number;
@@ -2688,39 +2706,21 @@ export class BridgeService {
       return {};
     }
 
+    const stateDb = this.openSqliteDatabase(stateDbPath);
     try {
-      const raw = await this.runPythonSqliteScript(
-        `
-import json
-import os
-import sqlite3
-
-db_path = os.environ["BRIDGE_SQLITE_DB_PATH"]
-thread_id = os.environ["BRIDGE_SQLITE_THREAD_ID"]
-conn = sqlite3.connect(db_path)
-cur = conn.cursor()
-result = {}
-table = cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'").fetchone()
-if table is not None:
-    columns = [row[1] for row in cur.execute("PRAGMA table_info(threads)")]
-    select_columns = []
-    if "sandbox_policy" in columns:
-        select_columns.append("sandbox_policy")
-    if "approval_mode" in columns:
-        select_columns.append("approval_mode")
-    if select_columns:
-        row = cur.execute(f"SELECT {', '.join(select_columns)} FROM threads WHERE id = ?", (thread_id,)).fetchone()
-        if row:
-            for index, column in enumerate(select_columns):
-                if row[index]:
-                    result[column] = row[index]
-conn.close()
-print(json.dumps(result))
-        `,
-        stateDbPath,
-        threadId,
-      );
-      const parsed = JSON.parse(raw.trim() || "{}") as {
+      if (!this.sqliteTableExists(stateDb, "threads")) {
+        return {};
+      }
+      const columns = this.listSqliteColumns(stateDb, "threads");
+      const selectColumns = ["sandbox_policy", "approval_mode"].filter((column) => columns.includes(column));
+      if (selectColumns.length === 0) {
+        return {};
+      }
+      const parsed = (stateDb
+        .query<{ sandbox_policy?: string; approval_mode?: string }>(
+          `SELECT ${selectColumns.join(", ")} FROM threads WHERE id = ?`,
+        )
+        .get(threadId) ?? {}) as {
         sandbox_policy?: string;
         approval_mode?: string;
       };
@@ -2734,6 +2734,8 @@ print(json.dumps(result))
         error,
       });
       return {};
+    } finally {
+      stateDb.close();
     }
   }
 
@@ -2743,105 +2745,95 @@ print(json.dumps(result))
       return null;
     }
 
-    const rolloutPath = await this.runPythonSqliteScript(
-      `
-import os
-import sqlite3
-
-db_path = os.environ["BRIDGE_SQLITE_DB_PATH"]
-thread_id = os.environ["BRIDGE_SQLITE_THREAD_ID"]
-conn = sqlite3.connect(db_path)
-cur = conn.cursor()
-rollout_path = ""
-table = cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'").fetchone()
-if table is not None:
-    columns = [row[1] for row in cur.execute("PRAGMA table_info(threads)")]
-    if "rollout_path" in columns:
-        row = cur.execute("SELECT rollout_path FROM threads WHERE id = ?", (thread_id,)).fetchone()
-        if row and row[0]:
-            rollout_path = row[0]
-conn.close()
-print(rollout_path)
-      `,
-      stateDbPath,
-      threadId,
-    );
-
-    return this.resolveCodexArtifactPath(rolloutPath.trim() || null);
+    const stateDb = this.openSqliteDatabase(stateDbPath);
+    try {
+      if (!this.sqliteTableExists(stateDb, "threads") || !this.sqliteColumnExists(stateDb, "threads", "rollout_path")) {
+        return null;
+      }
+      const rolloutPath =
+        stateDb.query<{ rollout_path?: string }>("SELECT rollout_path FROM threads WHERE id = ?").get(threadId)
+          ?.rollout_path ?? null;
+      return this.resolveCodexArtifactPath(rolloutPath?.trim() || null);
+    } finally {
+      stateDb.close();
+    }
   }
 
   private async deleteThreadFromStateDatabase(stateDbPath: string, threadId: string): Promise<string | null> {
     if (!existsSync(stateDbPath)) {
       return null;
     }
-    const rolloutPath = await this.runPythonSqliteScript(
-      `
-import os
-import sqlite3
+    const stateDb = this.openSqliteDatabase(stateDbPath);
+    let rolloutPath: string | null = null;
+    try {
+      stateDb.exec("BEGIN");
+      if (this.sqliteTableExists(stateDb, "threads")) {
+        rolloutPath =
+          stateDb.query<{ rollout_path?: string }>("SELECT rollout_path FROM threads WHERE id = ?").get(threadId)
+            ?.rollout_path ?? null;
+      }
+      if (
+        this.sqliteTableExists(stateDb, "agent_job_items") &&
+        this.sqliteColumnExists(stateDb, "agent_job_items", "assigned_thread_id")
+      ) {
+        stateDb
+          .prepare("UPDATE agent_job_items SET assigned_thread_id = NULL WHERE assigned_thread_id = ?")
+          .run(threadId);
+      }
+      for (const table of ["logs", "stage1_outputs", "thread_dynamic_tools"]) {
+        if (this.sqliteTableExists(stateDb, table) && this.sqliteColumnExists(stateDb, table, "thread_id")) {
+          stateDb.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(threadId);
+        }
+      }
+      if (this.sqliteTableExists(stateDb, "threads")) {
+        stateDb.prepare("DELETE FROM threads WHERE id = ?").run(threadId);
+      }
+      stateDb.exec("COMMIT");
+    } catch (error) {
+      stateDb.exec("ROLLBACK");
+      throw error;
+    } finally {
+      stateDb.close();
+    }
 
-db_path = os.environ["BRIDGE_SQLITE_DB_PATH"]
-thread_id = os.environ["BRIDGE_SQLITE_THREAD_ID"]
-conn = sqlite3.connect(db_path)
-cur = conn.cursor()
-
-def table_exists(name):
-    return cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
-
-def column_exists(table, column):
-    return any(row[1] == column for row in cur.execute(f"PRAGMA table_info({table})"))
-
-rollout_path = None
-
-if table_exists("threads"):
-    row = cur.execute("SELECT rollout_path FROM threads WHERE id = ?", (thread_id,)).fetchone()
-    if row and row[0]:
-        rollout_path = row[0]
-
-if table_exists("agent_job_items") and column_exists("agent_job_items", "assigned_thread_id"):
-    cur.execute("UPDATE agent_job_items SET assigned_thread_id = NULL WHERE assigned_thread_id = ?", (thread_id,))
-
-for table in ("logs", "stage1_outputs", "thread_dynamic_tools"):
-    if table_exists(table) and column_exists(table, "thread_id"):
-        cur.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
-
-if table_exists("threads"):
-    cur.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
-
-conn.commit()
-conn.close()
-print(rollout_path or "")
-      `,
-      stateDbPath,
-      threadId,
-    );
-
-    return this.resolveCodexArtifactPath(rolloutPath.trim() || null);
+    return this.resolveCodexArtifactPath(rolloutPath?.trim() || null);
   }
 
   private async deleteThreadFromLogsDatabase(logsDbPath: string, threadId: string): Promise<void> {
     if (!existsSync(logsDbPath)) {
       return;
     }
-    await this.runPythonSqliteScript(
-      `
-import os
-import sqlite3
+    const logsDb = this.openSqliteDatabase(logsDbPath);
+    try {
+      if (!this.sqliteTableExists(logsDb, "logs") || !this.sqliteColumnExists(logsDb, "logs", "thread_id")) {
+        return;
+      }
+      logsDb.prepare("DELETE FROM logs WHERE thread_id = ?").run(threadId);
+    } finally {
+      logsDb.close();
+    }
+  }
 
-db_path = os.environ["BRIDGE_SQLITE_DB_PATH"]
-thread_id = os.environ["BRIDGE_SQLITE_THREAD_ID"]
-conn = sqlite3.connect(db_path)
-cur = conn.cursor()
-table = cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='logs'").fetchone()
-if table is not None:
-    columns = [row[1] for row in cur.execute("PRAGMA table_info(logs)")]
-    if "thread_id" in columns:
-        cur.execute("DELETE FROM logs WHERE thread_id = ?", (thread_id,))
-conn.commit()
-conn.close()
-      `,
-      logsDbPath,
-      threadId,
+  private openSqliteDatabase(dbPath: string): SqliteDatabaseHandle {
+    return new BunSqliteDatabase(dbPath);
+  }
+
+  private sqliteTableExists(db: SqliteDatabaseHandle, tableName: string): boolean {
+    return Boolean(
+      db.query<{ present: number }>("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+        .get(tableName),
     );
+  }
+
+  private sqliteColumnExists(db: SqliteDatabaseHandle, tableName: string, columnName: string): boolean {
+    return this.listSqliteColumns(db, tableName).includes(columnName);
+  }
+
+  private listSqliteColumns(db: SqliteDatabaseHandle, tableName: string): string[] {
+    return db
+      .query<{ name: string }>(`PRAGMA table_info(${tableName})`)
+      .all()
+      .map((row) => row.name);
   }
 
   private resolveCodexArtifactPath(targetPath: string | null): string | null {
@@ -2867,29 +2859,6 @@ conn.close()
     }
 
     return path.join(codexHomeRoot, targetPath);
-  }
-
-  private runPythonSqliteScript(script: string, dbPath: string, threadId: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      execFile(
-        "python3",
-        ["-c", script],
-        {
-          env: {
-            ...process.env,
-            BRIDGE_SQLITE_DB_PATH: dbPath,
-            BRIDGE_SQLITE_THREAD_ID: threadId,
-          },
-        },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(new Error(stderr.trim() || error.message));
-            return;
-          }
-          resolve(stdout);
-        },
-      );
-    });
   }
 
   private async persistState(): Promise<void> {

@@ -8,12 +8,27 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const packageJsonPath = path.join(repoRoot, "package.json");
 const bunLockPath = path.join(repoRoot, "bun.lock");
 const packageLockPath = path.join(repoRoot, "package-lock.json");
+const workspacePackageJsonPaths = [
+  path.join(repoRoot, "packages", "shared", "package.json"),
+  path.join(repoRoot, "packages", "protocol", "package.json"),
+  path.join(repoRoot, "apps", "bridge-daemon", "package.json"),
+  path.join(repoRoot, "apps", "vscode-extension", "package.json"),
+];
 const composePath = path.join(repoRoot, "docker", "compose.yaml");
 const devStackPath = path.join(repoRoot, "scripts", "dev-stack.sh");
 const dockerfilePath = path.join(repoRoot, "docker", "images", "dev.Dockerfile");
 const bridgeCliPath = path.join(repoRoot, "scripts", "bridge-cli.mjs");
 const liveRuntimeCheckPath = path.join(repoRoot, "scripts", "live-runtime-check.mjs");
 const hubCliPath = path.join(repoRoot, "scripts", "hub-cli.mjs");
+const bridgeServicePath = path.join(repoRoot, "apps", "bridge-daemon", "src", "service", "bridge-service.ts");
+const bridgeServiceStatusTestPath = path.join(
+  repoRoot,
+  "apps",
+  "bridge-daemon",
+  "tests",
+  "bridge-service-status.test.ts",
+);
+const taskHttpTestPath = path.join(repoRoot, "apps", "bridge-daemon", "tests", "task-http.test.ts");
 const hubCliIntegrationTestPath = path.join(repoRoot, "tests", "integration", "hub-cli.test.mjs");
 const fakeAppServerFixturePath = path.join(
   repoRoot,
@@ -87,6 +102,39 @@ describe("bun-first workflow", () => {
       assert.equal(script.includes("node scripts/"), false);
       assert.equal(script.includes("Use `node scripts/"), false);
     }
+  });
+
+  it("uses bun test in each workspace test script", async () => {
+    const workspacePackageJsons = await Promise.all(
+      workspacePackageJsonPaths.map(async (workspacePackageJsonPath) => ({
+        path: path.relative(repoRoot, workspacePackageJsonPath),
+        packageJson: JSON.parse(await readFile(workspacePackageJsonPath, "utf8")),
+      })),
+    );
+
+    for (const { path: workspacePath, packageJson } of workspacePackageJsons) {
+      const testScript = packageJson.scripts?.test ?? "";
+
+      assert.match(testScript, /\bbun test\b/, `expected bun test in ${workspacePath}`);
+      assert.equal(
+        testScript.includes("tsx --test"),
+        false,
+        `unexpected tsx test runner in ${workspacePath}`,
+      );
+    }
+  });
+
+  it("keeps sqlite access aligned with bun-first execution", async () => {
+    const [bridgeService, bridgeServiceStatusTest, taskHttpTest] = await Promise.all([
+      readFile(bridgeServicePath, "utf8"),
+      readFile(bridgeServiceStatusTestPath, "utf8"),
+      readFile(taskHttpTestPath, "utf8"),
+    ]);
+
+    assert.equal(bridgeService.includes('"python3"'), false);
+    assert.match(bridgeService, /"bun:sqlite"/);
+    assert.equal(bridgeServiceStatusTest.includes('"node:sqlite"'), false);
+    assert.equal(taskHttpTest.includes('"node:sqlite"'), false);
   });
 
   it("keeps test helpers and mock runtime aligned with bun-first defaults", async () => {

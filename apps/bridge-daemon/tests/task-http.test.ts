@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
+import { Database } from "bun:sqlite";
 
 import { WebSocket } from "ws";
 
@@ -384,7 +384,7 @@ describe("bridge daemon task http server", () => {
     await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
     await writeFile(rolloutDiskPath, "{}\n", "utf8");
 
-    const stateDb = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+    const stateDb = new Database(path.join(config.codexHome, "state_5.sqlite"));
     stateDb.exec(`
       CREATE TABLE threads (
         id TEXT PRIMARY KEY,
@@ -454,7 +454,7 @@ describe("bridge daemon task http server", () => {
     );
     stateDb.close();
 
-    const logsDb = new DatabaseSync(path.join(config.codexHome, "logs_1.sqlite"));
+    const logsDb = new Database(path.join(config.codexHome, "logs_1.sqlite"));
     logsDb.exec(`
       CREATE TABLE logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -513,12 +513,12 @@ describe("bridge daemon task http server", () => {
       assert.equal(deleted.taskId, threadId);
       assert.equal(service.getTask(threadId), null);
 
-      const stateDbAfter = new DatabaseSync(path.join(config.codexHome, "state_5.sqlite"));
+      const stateDbAfter = new Database(path.join(config.codexHome, "state_5.sqlite"));
       assert.equal(stateDbAfter.prepare("SELECT COUNT(*) AS count FROM threads WHERE id = ?").get(threadId).count, 0);
       assert.equal(stateDbAfter.prepare("SELECT COUNT(*) AS count FROM logs WHERE thread_id = ?").get(threadId).count, 0);
       stateDbAfter.close();
 
-      const logsDbAfter = new DatabaseSync(path.join(config.codexHome, "logs_1.sqlite"));
+      const logsDbAfter = new Database(path.join(config.codexHome, "logs_1.sqlite"));
       assert.equal(logsDbAfter.prepare("SELECT COUNT(*) AS count FROM logs WHERE thread_id = ?").get(threadId).count, 0);
       logsDbAfter.close();
 
