@@ -4,6 +4,13 @@ import assert from "node:assert/strict";
 import { loadBridgeConfig, resolveWorkspacePath } from "../src/index";
 
 describe("shared config helpers", () => {
+  it("preserves POSIX workspace semantics for relative paths", () => {
+    assert.equal(
+      resolveWorkspacePath("/workspace/codex-feishu-bridge", ".tmp"),
+      "/workspace/codex-feishu-bridge/.tmp",
+    );
+  });
+
   it("resolves relative bridge paths inside the workspace", () => {
     const config = loadBridgeConfig(
       {

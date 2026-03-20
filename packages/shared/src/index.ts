@@ -55,9 +55,25 @@ export function parseBoolean(value: string | undefined, defaultValue: boolean): 
   return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
+function isWindowsAbsolutePath(target: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(target) || target.startsWith("\\\\");
+}
+
+function isPosixAbsolutePath(target: string): boolean {
+  return path.posix.isAbsolute(target);
+}
+
+function shouldUsePosixResolution(workspaceRoot: string): boolean {
+  return isPosixAbsolutePath(workspaceRoot) && !isWindowsAbsolutePath(workspaceRoot);
+}
+
 export function resolveWorkspacePath(workspaceRoot: string, target: string): string {
-  if (path.isAbsolute(target)) {
+  if (isWindowsAbsolutePath(target) || isPosixAbsolutePath(target)) {
     return target;
+  }
+
+  if (shouldUsePosixResolution(workspaceRoot)) {
+    return path.posix.resolve(workspaceRoot, target);
   }
 
   return path.resolve(workspaceRoot, target);
