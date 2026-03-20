@@ -316,6 +316,60 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
     }
   });
 
+  it("turns a group post message with an @ mention into a draft card", async () => {
+    const harness = await createHarness();
+
+    try {
+      await harness.onMessage(
+        {
+          message_id: "om_group_post",
+          thread_id: "omt_group_post",
+          root_id: "om_root_group_post",
+          chat_id: "oc_chat_id",
+          message_type: "post",
+          content: JSON.stringify({
+            title: "",
+            content: [
+              [
+                {
+                  tag: "at",
+                  user_id: "@_user_1",
+                  user_name: "codex-feishu-bridge",
+                  style: [],
+                },
+                {
+                  tag: "text",
+                  text: " 这是群聊里发的",
+                },
+              ],
+            ],
+          }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_group_post",
+          },
+        },
+      );
+
+      assert.equal(harness.service.listTasks().length, 0);
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
+        "group post draft card reply",
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "这是群聊里发的")),
+        true,
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "codex-feishu-bridge")),
+        false,
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("updates the draft card through long-connection card actions and falls back to the model default effort", async () => {
     const harness = await createHarness();
 

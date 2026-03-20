@@ -202,14 +202,50 @@ function parseMessageContent(rawContent: string | undefined): Record<string, unk
   }
 }
 
+function extractPostText(content: unknown): string | undefined {
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const lines: string[] = [];
+  for (const row of content) {
+    if (!Array.isArray(row)) {
+      continue;
+    }
+
+    const parts: string[] = [];
+    for (const item of row) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const tag = "tag" in item && typeof item.tag === "string" ? item.tag : undefined;
+      if (tag === "at") {
+        continue;
+      }
+
+      if ("text" in item && typeof item.text === "string") {
+        parts.push(item.text);
+      }
+    }
+
+    if (parts.length > 0) {
+      lines.push(parts.join(""));
+    }
+  }
+
+  const text = lines.join("\n").trim();
+  return text || undefined;
+}
+
 function parseTextContent(rawContent: string | undefined): string {
   if (!rawContent) {
     return "";
   }
 
   try {
-    const parsed = parseMessageContent(rawContent) as { text?: string };
-    return parsed.text?.trim() ?? rawContent.trim();
+    const parsed = parseMessageContent(rawContent) as { text?: string; content?: unknown };
+    return parsed.text?.trim() ?? extractPostText(parsed.content) ?? rawContent.trim();
   } catch {
     return rawContent.trim();
   }
@@ -1209,7 +1245,7 @@ export class FeishuBridge {
       return;
     }
 
-    if (message.message_type !== "text") {
+    if (message.message_type !== "text" && message.message_type !== "post") {
       this.options.logger.info("ignoring unsupported feishu message type", summary);
       return;
     }

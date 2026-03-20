@@ -101,8 +101,39 @@ function parsePreview(rawContent: string | undefined): string | undefined {
   }
 
   try {
-    const parsed = JSON.parse(rawContent) as { text?: string };
-    return parsed.text?.trim().slice(0, 120) ?? rawContent.trim().slice(0, 120);
+    const parsed = JSON.parse(rawContent) as { text?: string; content?: unknown };
+    if (parsed.text?.trim()) {
+      return parsed.text.trim().slice(0, 120);
+    }
+    if (Array.isArray(parsed.content)) {
+      const lines: string[] = [];
+      for (const row of parsed.content) {
+        if (!Array.isArray(row)) {
+          continue;
+        }
+        const parts: string[] = [];
+        for (const item of row) {
+          if (!item || typeof item !== "object") {
+            continue;
+          }
+          const tag = "tag" in item && typeof item.tag === "string" ? item.tag : undefined;
+          if (tag === "at") {
+            continue;
+          }
+          if ("text" in item && typeof item.text === "string") {
+            parts.push(item.text);
+          }
+        }
+        if (parts.length > 0) {
+          lines.push(parts.join(""));
+        }
+      }
+      const preview = lines.join("\n").trim();
+      if (preview) {
+        return preview.slice(0, 120);
+      }
+    }
+    return rawContent.trim().slice(0, 120);
   } catch {
     return rawContent.trim().slice(0, 120);
   }
