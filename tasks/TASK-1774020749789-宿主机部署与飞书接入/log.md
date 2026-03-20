@@ -1,0 +1,23 @@
+# Task Log
+
+- 初始化任务目录。
+- 2026-03-20T15:32:56.793Z [agent] 已启用 playwright 技能并开始检查本机 bun / 浏览器 / Feishu 部署前置条件。
+- 2026-03-20T15:32:56.834Z [agent] 任务状态更新为 in_progress：开始进行本机部署、Playwright 登录辅助与 Feishu 接入。
+- 2026-03-20T15:36:14.844Z [agent] 已用 Playwright 打开飞书开放平台登录页，当前等待用户在有头浏览器中完成登录。
+- 2026-03-20T15:37:08.739Z [agent] 用户已在有头浏览器中完成飞书登录，开始接管开放平台页面并继续配置。
+- 2026-03-20T15:42:54.944Z [agent] 已创建 Feishu 企业自建应用 codex-feishu-bridge，当前 App ID 为 cli_a937d6c180381bb3，开始配置机器人能力与事件订阅。
+- 2026-03-20T16:20:02.771Z [agent] subagent 已完成浏览器端首轮配置：已开通 im:chat:read、im:message、im:message:send_as_bot 三个应用权限，并确认事件与回调页已切到长连接模式；当前卡点是控制台要求先检测到本地长连接，且默认群 ID/群名尚未确定。
+- 2026-03-20T16:24:17.421Z [agent] 已将 FEISHU_APP_ID 和 FEISHU_APP_SECRET 回填到 docker/.env，并运行 resolve-feishu-chat --list 进行可见群聊解析。
+- 2026-03-20T16:24:38.114Z [agent] Feishu tenant_access_token 可获取，但 /open-apis/im/v1/chats 返回 400，错误码 232034：The app is unavailable or inactivate in the tenant；当前无法列出可见群聊。
+- 2026-03-20T16:27:46.472Z [agent] 已通过 subagent 安全回填 FEISHU_APP_ID/FEISHU_APP_SECRET；tenant_access_token 获取成功，但列群接口返回 232034（应用在当前租户 unavailable or inactivate），下一步需要在飞书后台完成当前租户内的激活/发布/测试配置。
+- 2026-03-20T16:44:56.257Z [agent] 用户提供固定默认群 ID：oc_a5512d87cc743dc54a7079f7e1d18815，准备直接回填 FEISHU_DEFAULT_CHAT_ID 并跳过列群解析依赖。
+- 2026-03-20T16:46:41.905Z [agent] 已将 FEISHU_DEFAULT_CHAT_ID 回填为用户提供的固定群 ID，并在 host-native 启动链路下成功拉起 bridge-daemon；日志显示 Feishu 长连接客户端 ready。
+- 2026-03-20T17:48:40.717Z [agent] subagent 已完成飞书后台收尾：新增开通 接收群聊中@机器人消息事件 / 读取用户发给机器人的单聊消息 两条权限，事件列表已包含 im.message.receive_v1 与 card.action.trigger，并已将 0.1.1 版本发布成功，页面状态为 当前修改均已发布。
+- 2026-03-20T17:49:22.816Z [agent] 任务状态更新为 review：本机服务健康、飞书后台配置与版本发布已完成，待进行真实群消息冒烟验证。
+- 2026-03-20T18:12:19.784Z [agent] 真实群消息冒烟暴露卡片 JSON 兼容问题：Feishu 在创建 draft 配置卡片时拒绝 number 型 revision。已通过 TDD 新增 feishu-cards 回归测试，并将卡片 action value 中的 revision 统一序列化为字符串；相关 Feishu 卡片/长连接测试 25 项已通过，host 服务已重启到新代码。
+- 2026-03-20T18:36:59.251Z [agent] 定位到 Feishu draft 卡片仍失败的真实根因不是 revision，而是 select_static.initial_option 传成了对象。已将 initial_option 改为字符串，相关 Feishu 卡片/长连接测试 26 项通过，并用真实 Feishu reply API 验证当前完整 draft card 已可成功发送。
+- 2026-03-20T18:37:48.658Z [agent] 已提交修复切片 fd82e9e（fix(feishu): 修复 draft 卡片初始选项序列化）。宿主服务已用新构建重启，/health 正常，真实 Feishu reply API 对完整 draft card 返回 200 success。
+- 2026-03-20T19:26:03.968Z [agent] 已补齐群聊 @ 机器人时的 post 富文本消息解析：现在会从 Feishu post 内容里抽取纯文本并继续走现有 draft/task 路由，同时长连接日志预览也会显示提取后的文本。相关 Feishu cards/long-connection/sdk/webhook 测试 32 项通过，宿主服务已重启到新代码。
+- 2026-03-20T19:33:38.201Z [agent] 已回收两条过期 next action：resolve-feishu-chat 前置条件和‘群里发普通文本’的旧表述均已失效；新增当前真实待办为‘群里 @ 机器人 发送 post 富文本并完成端到端联调验证’。
+- 2026-03-20T19:38:41.092Z [agent] 用户已完成群聊 @ 机器人联调，并确认 bridge 能收到消息；至此私聊 text 与群聊 post 两条真实链路均已打通。
+- 2026-03-20T19:38:58.858Z [agent] 任务状态更新为 done：宿主机部署、飞书后台接入、私聊与群聊真实链路联调均已完成。

@@ -1,0 +1,11 @@
+id: TASK-1774020749789-宿主机部署与飞书接入
+title: 宿主机部署与飞书接入
+status: done
+archived: false
+created_at: '2026-03-20T15:32:29.789Z'
+updated_at: '2026-03-21T03:58:29.559Z'
+related_repos:
+  - F:\Projects\NodeProjects\codex-feishu-bridge
+depends_on: []
+blocked_by: []
+tags: []
