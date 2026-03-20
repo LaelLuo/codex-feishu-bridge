@@ -7,6 +7,8 @@ import { createInterface } from "node:readline";
 
 import { createConsoleLogger, ensureDir, loadBridgeConfig } from "@codex-feishu-bridge/shared";
 
+import { resolveRuntimeSocketPath } from "./runtime/socket-endpoint";
+
 export interface RuntimeSocketProxyHandle {
   close(): Promise<void>;
   socketPath: string;
@@ -25,10 +27,14 @@ async function removeSocketIfPresent(socketPath: string): Promise<void> {
 export async function startRuntimeSocketProxy(): Promise<RuntimeSocketProxyHandle> {
   const logger = createConsoleLogger("codex-runtime-proxy");
   const config = loadBridgeConfig();
-  const socketPath = config.codexRuntimeProxySocket;
+  const configuredSocketPath = config.codexRuntimeProxySocket;
+  const socketPath = resolveRuntimeSocketPath(configuredSocketPath);
+  const usesNamedPipe = process.platform === "win32" && socketPath.startsWith("\\\\.\\pipe\\");
 
-  await ensureDir(path.dirname(socketPath));
-  await removeSocketIfPresent(socketPath);
+  if (!usesNamedPipe) {
+    await ensureDir(path.dirname(configuredSocketPath));
+    await removeSocketIfPresent(socketPath);
+  }
 
   let activeClient: Socket | null = null;
   let activeChild: ChildProcessWithoutNullStreams | null = null;
@@ -109,7 +115,9 @@ export async function startRuntimeSocketProxy(): Promise<RuntimeSocketProxyHandl
       resolve();
     });
   });
-  chmodSync(socketPath, 0o777);
+  if (!usesNamedPipe) {
+    chmodSync(socketPath, 0o777);
+  }
 
   logger.info(`codex runtime proxy listening on ${socketPath}`);
 
@@ -131,7 +139,9 @@ export async function startRuntimeSocketProxy(): Promise<RuntimeSocketProxyHandl
           resolve();
         });
       });
-      await removeSocketIfPresent(socketPath);
+      if (!usesNamedPipe) {
+        await removeSocketIfPresent(socketPath);
+      }
     },
   };
 }

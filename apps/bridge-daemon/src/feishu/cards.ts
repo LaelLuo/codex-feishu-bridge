@@ -852,7 +852,7 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       update_multi: true,
     },
     header: {
-      title: plainText(`Activity: ${task.title}`),
+      title: plainText(`Task Activity: ${task.title}`),
       template: activityState.template,
     },
     elements: [

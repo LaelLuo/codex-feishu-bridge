@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 
 import type { BridgeConfig, Logger } from "@codex-feishu-bridge/shared";
 
+import { resolveRuntimeSocketPath } from "./socket-endpoint";
+
 type JsonRpcId = number;
 
 interface JsonRpcResponse {
@@ -134,7 +136,7 @@ export class JsonRpcSocketClient {
 
   private async connectAndInitialize(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const socket = createConnection(this.config.codexRuntimeProxySocket);
+      const socket = createConnection(resolveRuntimeSocketPath(this.config.codexRuntimeProxySocket));
       let connected = false;
 
       const rejectConnect = (error: Error): void => {

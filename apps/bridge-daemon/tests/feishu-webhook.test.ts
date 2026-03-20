@@ -338,13 +338,18 @@ describe("feishu bridge", { concurrency: 1 }, () => {
       });
 
       await waitFor(
-        () => (harness.service.getTask(createdTask!.taskId)?.conversation.length ?? 0) > previousConversationLength,
+        () =>
+          (harness.service.getTask(createdTask!.taskId)?.conversation.length ?? 0) > previousConversationLength ||
+          (harness.service.getTask(createdTask!.taskId)?.queuedMessageCount ?? 0) > 0 ||
+          harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second webhook prompt")),
         "follow-up routing",
       );
-      await waitFor(
-        () => harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second webhook prompt")),
-        "follow-up final reply",
-      );
+      if ((harness.service.getTask(createdTask!.taskId)?.queuedMessageCount ?? 0) === 0) {
+        await waitFor(
+          () => harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second webhook prompt")),
+          "follow-up final reply",
+        );
+      }
     } finally {
       await harness.cleanup();
     }

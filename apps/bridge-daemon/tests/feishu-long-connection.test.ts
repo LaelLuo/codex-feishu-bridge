@@ -186,7 +186,7 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
   }
 }
 
-describe("feishu long connection ingress", () => {
+describe("feishu long connection ingress", { concurrency: 1 }, () => {
   it("turns the first unbound plain-text message into a draft card and creates a bound task from card actions", async () => {
     const harness = await createHarness();
 
