@@ -6,6 +6,8 @@
 - VSCode 扩展是桌面图形前端，不是运行真身
 - Feishu 是手机端线程和远程控制入口
 - Docker 是默认的 Bun and TypeScript 开发环境
+- 对仓库使用者可见的默认工作流保持 bun-first：依赖安装、脚本入口、测试链路和开发容器都优先使用 Bun
+- 剩余的 Node 相关项只保留在平台或兼容层：例如 VSCode extension 的 Node 宿主约束、`node:*` 标准库导入、类型定义和上游包名；这些不改变 bun-first 默认路径
 
 ## 四层拓扑
 
