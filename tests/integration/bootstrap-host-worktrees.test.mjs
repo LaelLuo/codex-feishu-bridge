@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const scriptPath = path.join(repoRoot, "docker", "scripts", "bootstrap-host-worktrees.sh");
+const devStackPath = path.join(repoRoot, "scripts", "dev-stack.sh");
 const gitAttributesPath = path.join(repoRoot, ".gitattributes");
 
 describe("bootstrap-host-worktrees.sh", () => {
@@ -20,5 +21,21 @@ describe("bootstrap-host-worktrees.sh", () => {
     const gitAttributes = await readFile(gitAttributesPath, "utf8");
 
     assert.match(gitAttributes, /^\*\.sh text eol=lf$/m);
+  });
+});
+
+describe("dev-stack.sh", () => {
+  it("uses LF line endings so host bash can execute it on Windows workspaces", async () => {
+    const content = await readFile(devStackPath, "utf8");
+
+    assert.ok(content.startsWith("#!/usr/bin/env bash\n"));
+    assert.equal(content.includes("\r"), false);
+  });
+
+  it("contains Windows Codex app resource handling for container stdio runs", async () => {
+    const content = await readFile(devStackPath, "utf8");
+
+    assert.match(content, /resources\/codex/);
+    assert.match(content, /\/opt\/host-codex-bin\/codex/);
   });
 });

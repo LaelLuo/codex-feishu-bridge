@@ -114,4 +114,27 @@ describe("stdio runtime compatibility", () => {
       await runtime.dispose();
     }
   });
+
+  it("launches script entrypoints through bun when CODEX_APP_SERVER_BIN points at a JS file", async () => {
+    const namespace = randomUUID();
+    const fixturePath = resolveTestRepoPath("apps/bridge-daemon/tests/fixtures/fake-codex-app-server.mjs");
+    const config = createTestBridgeConfig(namespace, {
+      CODEX_RUNTIME_BACKEND: "stdio",
+      CODEX_APP_SERVER_BIN: fixturePath,
+      CODEX_APP_SERVER_ARGS: "",
+    });
+    const logger = createConsoleLogger("stdio-runtime-script-entry-test");
+
+    await prepareBridgeDirectories(config);
+
+    const runtime = new StdioCodexRuntime(config, logger);
+
+    try {
+      await runtime.start();
+      const account = await runtime.readAccount(false);
+      assert.equal(account.account?.type, "chatgpt");
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });

@@ -20,7 +20,7 @@ describe("extension startup flow source", () => {
 
     assert.match(extensionPackage, /"onStartupFinished"/);
     assert.match(extensionPackage, /"codexFeishuBridge\.openMonitorOnStartup"/);
-    assert.match(rootPackage, /"monitor:all": "bash \.\/scripts\/dev-stack\.sh monitor"/);
+    assert.match(rootPackage, /"monitor:all": "bun scripts\/dev-stack\.ts monitor"/);
     assert.match(launch, /"CODEX_FEISHU_BRIDGE_AUTO_OPEN_MONITOR": "1"/);
     assert.match(extensionSource, /function envFlagEnabled\(name: string\): boolean/);
     assert.match(extensionSource, /CODEX_FEISHU_BRIDGE_AUTO_OPEN_MONITOR/);

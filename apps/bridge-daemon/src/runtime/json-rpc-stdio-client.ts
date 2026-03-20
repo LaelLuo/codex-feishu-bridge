@@ -1,8 +1,10 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import type { BridgeConfig, Logger } from "@codex-feishu-bridge/shared";
+
+import { spawnCodexProcess } from "./spawn-codex-process";
 
 type JsonRpcId = number;
 
@@ -33,6 +35,7 @@ export class JsonRpcStdioClient {
   >();
 
   private child: ChildProcessWithoutNullStreams | null = null;
+  private disposeChildProcess: (() => void) | null = null;
   private initialized = false;
   private nextId = 1;
 
@@ -46,20 +49,17 @@ export class JsonRpcStdioClient {
       return;
     }
 
-    this.child = spawn(this.config.codexExecutable, this.config.codexArgs, {
-      cwd: this.config.workspaceRoot,
-      env: {
-        ...process.env,
-        CODEX_HOME: this.config.codexHome,
-      },
-      stdio: "pipe",
-    });
+    const managedChild = spawnCodexProcess(this.config);
+    this.child = managedChild.child;
+    this.disposeChildProcess = managedChild.dispose;
 
     this.child.stderr.on("data", (chunk: Buffer) => {
       this.logger.warn("codex app-server stderr", chunk.toString("utf8"));
     });
 
     this.child.once("exit", (code, signal) => {
+      this.disposeChildProcess?.();
+      this.disposeChildProcess = null;
       const error = new Error(`codex app-server exited with code=${code} signal=${signal}`);
       for (const pending of this.pending.values()) {
         pending.reject(error);
@@ -93,6 +93,8 @@ export class JsonRpcStdioClient {
     }
 
     this.child.kill();
+    this.disposeChildProcess?.();
+    this.disposeChildProcess = null;
     this.child = null;
     this.initialized = false;
   }

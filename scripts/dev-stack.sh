@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+# Keep this script LF-only so host bash and Linux containers execute it consistently.
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="${repo_root}/docker/compose.yaml"
 env_example="${repo_root}/docker/.env.example"
@@ -19,14 +21,16 @@ created_env_file=0
 autofilled_entries=()
 
 compose() {
+  local docker_compose_file="${compose_file}"
+  local docker_env_file="${env_file}"
+
   ensure_env_file
-  (
-    set -a
-    # shellcheck disable=SC1090
-    source "${env_file}"
-    set +a
-    docker compose -f "${compose_file}" --env-file "${env_file}" "$@"
-  )
+  if command -v cygpath >/dev/null 2>&1; then
+    docker_compose_file="$(cygpath -w "${compose_file}")"
+    docker_env_file="$(cygpath -w "${env_file}")"
+  fi
+
+  docker compose -f "${docker_compose_file}" --env-file "${docker_env_file}" "$@"
 }
 
 require_docker() {
@@ -168,11 +172,16 @@ resolve_code_bin() {
 }
 
 load_env_file() {
+  local line=""
+
   ensure_env_file
-  set -a
-  # shellcheck disable=SC1090
-  source "${env_file}"
-  set +a
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ -z "${line}" || "${line}" == \#* ]]; then
+      continue
+    fi
+
+    export "${line}"
+  done < "${env_file}"
 }
 
 resolve_host_path_from_workspace() {
@@ -200,8 +209,22 @@ resolve_runtime_proxy_socket_host_path() {
   resolve_host_path_from_workspace "${current}"
 }
 
-detect_host_codex_home() {
+default_host_codex_home_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "${HOME}/.codex"
+    return
+  fi
+
   echo "${HOME}/.codex"
+}
+
+detect_host_codex_home() {
+  if [[ -n "${HOST_CODEX_HOME:-}" ]] && [[ -d "${HOST_CODEX_HOME}" ]]; then
+    echo "${HOST_CODEX_HOME}"
+    return
+  fi
+
+  default_host_codex_home_path
 }
 
 detect_host_codex_bin_dir() {
@@ -220,12 +243,42 @@ detect_host_codex_bin_dir() {
         || printf '%s' "${codex_command}"
     )"
     if [[ "${resolved_command}" == */bin/codex.js ]]; then
-      dirname "$(dirname "${resolved_command}")"
+      resolved_command="$(dirname "$(dirname "${resolved_command}")")"
+      if command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "${resolved_command}"
+        return
+      fi
+      echo "${resolved_command}"
+      return
+    fi
+    if [[ "${resolved_command}" == */resources/codex || "${resolved_command}" == */resources/codex.exe ]]; then
+      resolved_command="$(dirname "${resolved_command}")"
+      if command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "${resolved_command}"
+        return
+      fi
+      echo "${resolved_command}"
       return
     fi
   fi
 
   echo ""
+}
+
+resolve_container_codex_bin() {
+  local host_dir="$1"
+
+  if [[ -f "${host_dir}/bin/codex.js" ]]; then
+    echo "/opt/host-codex-bin/bin/codex.js"
+    return
+  fi
+
+  if [[ -f "${host_dir}/codex" || -f "${host_dir}/codex.exe" ]]; then
+    echo "/opt/host-codex-bin/codex"
+    return
+  fi
+
+  echo "codex"
 }
 
 sync_env_value_from_shell() {
@@ -254,30 +307,45 @@ report_env_autofill() {
   done
 }
 
+uses_msys_host_path() {
+  local current="${1:-}"
+
+  [[ "${current}" =~ ^/[A-Za-z]/ ]]
+}
+
 autofill_env_file() {
   local backend=""
   local current=""
+  local bridge_codex_home=""
+  local default_host_codex_home=""
   local host_codex_home=""
   local host_codex_bin_dir=""
 
   backend="$(determine_runtime_backend)"
+  bridge_codex_home="${workspace_dir}/.tmp/codex-home"
+  if ! command -v cygpath >/dev/null 2>&1; then
+    bridge_codex_home="/codex-home"
+  fi
+  default_host_codex_home="$(default_host_codex_home_path)"
   host_codex_home="$(detect_host_codex_home)"
   host_codex_bin_dir="$(detect_host_codex_bin_dir)"
 
   current="$(read_env_value BRIDGE_CODEX_HOME)"
-  if [[ -z "${current}" || "${current}" == "${workspace_dir}/.tmp/codex-home" ]]; then
-    set_env_value BRIDGE_CODEX_HOME "/codex-home"
-    record_env_update "BRIDGE_CODEX_HOME" "/codex-home"
+  if [[ -z "${current}" || "${current}" == "/codex-home" || "${current}" == "${workspace_dir}/.tmp/codex-home" ]]; then
+    set_env_value BRIDGE_CODEX_HOME "${bridge_codex_home}"
+    record_env_update "BRIDGE_CODEX_HOME" "${bridge_codex_home}"
   fi
 
   current="$(read_env_value HOST_CODEX_HOME)"
-  if [[ -z "${current}" || "${current}" == "../.tmp/codex-home" ]]; then
+  if [[ -z "${current}" || "${current}" == "../.tmp/codex-home" ]] \
+    || uses_msys_host_path "${current}" \
+    || [[ "${current}" == "${default_host_codex_home}" && "${host_codex_home}" != "${default_host_codex_home}" ]]; then
     set_env_value HOST_CODEX_HOME "${host_codex_home}"
     record_env_update "HOST_CODEX_HOME" "${host_codex_home}"
   fi
 
   current="$(read_env_value HOST_CODEX_BIN_DIR)"
-  if [[ -n "${host_codex_bin_dir}" ]] && [[ -z "${current}" || "${current}" == "/tmp" ]]; then
+  if [[ -n "${host_codex_bin_dir}" ]] && ([[ -z "${current}" || "${current}" == "/tmp" ]] || uses_msys_host_path "${current}"); then
     set_env_value HOST_CODEX_BIN_DIR "${host_codex_bin_dir}"
     record_env_update "HOST_CODEX_BIN_DIR" "${host_codex_bin_dir}"
   fi
@@ -290,8 +358,9 @@ autofill_env_file() {
 
   current="$(read_env_value CODEX_APP_SERVER_BIN)"
   if [[ -n "${host_codex_bin_dir}" ]] && [[ -z "${current}" || "${current}" == "codex" ]]; then
-    set_env_value CODEX_APP_SERVER_BIN "/opt/host-codex-bin/bin/codex.js"
-    record_env_update "CODEX_APP_SERVER_BIN" "/opt/host-codex-bin/bin/codex.js"
+    current="$(resolve_container_codex_bin "${host_codex_bin_dir}")"
+    set_env_value CODEX_APP_SERVER_BIN "${current}"
+    record_env_update "CODEX_APP_SERVER_BIN" "${current}"
   fi
 
   current="$(read_env_value CODEX_RUNTIME_PROXY_SOCKET)"
@@ -335,11 +404,23 @@ resolve_host_codex_home() {
 resolve_host_codex_bin() {
   local current="${1:-}"
   if [[ -n "${HOST_CODEX_BIN_DIR:-}" ]]; then
-    echo "${HOST_CODEX_BIN_DIR}/bin/codex.js"
-    return
+    if [[ -f "${HOST_CODEX_BIN_DIR}/bin/codex.js" ]]; then
+      echo "${HOST_CODEX_BIN_DIR}/bin/codex.js"
+      return
+    fi
+
+    if [[ -f "${HOST_CODEX_BIN_DIR}/codex.exe" ]]; then
+      echo "${HOST_CODEX_BIN_DIR}/codex.exe"
+      return
+    fi
+
+    if [[ -f "${HOST_CODEX_BIN_DIR}/codex" ]]; then
+      echo "${HOST_CODEX_BIN_DIR}/codex"
+      return
+    fi
   fi
 
-  if [[ -z "${current}" ]] || [[ "${current}" == "/opt/host-codex-bin/bin/codex.js" ]]; then
+  if [[ -z "${current}" ]] || [[ "${current}" == "/opt/host-codex-bin/bin/codex.js" ]] || [[ "${current}" == "/opt/host-codex-bin/codex" ]]; then
     echo "codex"
     return
   fi
@@ -513,6 +594,32 @@ start_workspace_dev() {
   compose up -d --build workspace-dev
 }
 
+sync_host_codex_auth_if_needed() {
+  local bridge_home=""
+  local host_home=""
+
+  bridge_home="$(read_env_value BRIDGE_CODEX_HOME)"
+  host_home="$(read_env_value HOST_CODEX_HOME)"
+
+  if [[ -z "${bridge_home}" || "${bridge_home}" == "/codex-home" || -z "${host_home}" ]]; then
+    return
+  fi
+
+  echo "[setup] Syncing host Codex auth into bridge home..."
+  compose exec -T workspace-dev bash -lc "
+    set -euo pipefail
+    source_home='/codex-home'
+    bridge_home='${bridge_home}'
+    mkdir -p \"\${bridge_home}\"
+
+    for entry in auth.json config.toml; do
+      if [[ -f \"\${source_home}/\${entry}\" ]]; then
+        cp \"\${source_home}/\${entry}\" \"\${bridge_home}/\${entry}\"
+      fi
+    done
+  "
+}
+
 install_dependencies() {
   local lock_hash
   lock_hash="$(hash_file "${repo_root}/bun.lock")"
@@ -667,6 +774,7 @@ command_up() {
   ensure_env_file
   mkdir -p "${repo_root}/.tmp"
   start_workspace_dev
+  sync_host_codex_auth_if_needed
   install_dependencies
   build_artifacts
   start_runtime_proxy_if_needed

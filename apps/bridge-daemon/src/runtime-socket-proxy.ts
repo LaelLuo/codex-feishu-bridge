@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { createConsoleLogger, ensureDir, loadBridgeConfig } from "@codex-feishu-bridge/shared";
 
 import { resolveRuntimeSocketPath } from "./runtime/socket-endpoint";
+import { spawnCodexProcess } from "./runtime/spawn-codex-process";
 
 export interface RuntimeSocketProxyHandle {
   close(): Promise<void>;
@@ -57,14 +58,8 @@ export async function startRuntimeSocketProxy(): Promise<RuntimeSocketProxyHandl
     logger.info("runtime proxy client connected");
     activeClient = client;
 
-    const child = spawn(config.codexExecutable, config.codexArgs, {
-      cwd: config.workspaceRoot,
-      env: {
-        ...process.env,
-        CODEX_HOME: config.codexHome,
-      },
-      stdio: "pipe",
-    });
+    const managedChild = spawnCodexProcess(config);
+    const child = managedChild.child;
     activeChild = child;
 
     child.stderr.on("data", (chunk: Buffer) => {
@@ -76,6 +71,7 @@ export async function startRuntimeSocketProxy(): Promise<RuntimeSocketProxyHandl
     });
 
     child.once("exit", (code, signal) => {
+      managedChild.dispose();
       logger.warn(`codex app-server exited with code=${code} signal=${signal}`);
       if (!client.destroyed) {
         client.end();
@@ -100,6 +96,7 @@ export async function startRuntimeSocketProxy(): Promise<RuntimeSocketProxyHandl
       if (!child.killed) {
         child.kill();
       }
+      managedChild.dispose();
       clearSession(client, child);
     });
 
