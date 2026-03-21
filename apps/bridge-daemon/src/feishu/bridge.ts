@@ -2044,6 +2044,31 @@ export class FeishuBridge {
     );
   }
 
+  private runCardActionFollowUp(label: string, action: () => Promise<void>): void {
+    void action().catch((error) => {
+      this.options.logger.warn(`failed to complete feishu card action follow-up: ${label}`, error);
+    });
+  }
+
+  private async buildCurrentDraftResponseCard(params: {
+    binding: FeishuThreadBinding;
+    draft: FeishuThreadDraft;
+    note?: string;
+  }): Promise<FeishuInteractiveCard> {
+    const { binding, draft, note } = params;
+    return this.buildDraftCard(binding, draft, note ?? draft.note);
+  }
+
+  private async buildCurrentTaskResponseCard(params: {
+    task: BridgeTask;
+    binding: FeishuThreadBinding;
+    note?: string;
+  }): Promise<FeishuInteractiveCard> {
+    const { task, binding, note } = params;
+    const currentCard = this.getThreadTaskCard(binding);
+    return this.buildTaskControlCard(task, binding, currentCard?.revision ?? 0, note ?? currentCard?.note);
+  }
+
   private async renderTaskControlCard(params: {
     task: BridgeTask;
     binding: FeishuThreadBinding;
@@ -2658,13 +2683,18 @@ export class FeishuBridge {
       switch (value.kind) {
         case "draft.more":
           if (action?.option === "import") {
-            await this.replyDraftImportCard({
+            this.runCardActionFollowUp("draft.more.import", async () => {
+              await this.replyDraftImportCard({
+                binding,
+                draft,
+                note: this.t("feishu.bridge.importSubmitPrompt"),
+                replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? draft.cardMessageId ?? binding.threadKey,
+              });
+            });
+            return this.buildCurrentDraftResponseCard({
               binding,
               draft,
-              note: this.t("feishu.bridge.importSubmitPrompt"),
-              replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? draft.cardMessageId ?? binding.threadKey,
             });
-            return;
           }
           draft.note = this.t("feishu.bridge.selectDraftMorePrompt");
           break;
@@ -3036,13 +3066,18 @@ export class FeishuBridge {
         break;
       }
       case "task.rename.open":
-        await this.replyTaskRenameCard({
+        this.runCardActionFollowUp("task.rename.open", async () => {
+          await this.replyTaskRenameCard({
+            task,
+            binding,
+            note: this.t("feishu.bridge.renameSubmitPrompt"),
+            replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
+          });
+        });
+        return this.buildCurrentTaskResponseCard({
           task,
           binding,
-          note: this.t("feishu.bridge.renameSubmitPrompt"),
-          replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
         });
-        return;
       case "task.rename.submit": {
         const submittedTitle = readCardFormString(event, "task_title_input")?.trim() ?? "";
         if (!submittedTitle) {
@@ -3067,13 +3102,18 @@ export class FeishuBridge {
         return;
       }
       case "task.status":
-        await this.replyTaskStatusSnapshotCard({
+        this.runCardActionFollowUp("task.status", async () => {
+          await this.replyTaskStatusSnapshotCard({
+            task,
+            binding,
+            note: formatTaskSummary(task, this.options.config.feishuUiLanguage),
+            replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
+          });
+        });
+        return this.buildCurrentTaskResponseCard({
           task,
           binding,
-          note: formatTaskSummary(task, this.options.config.feishuUiLanguage),
-          replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
         });
-        return;
       case "task.withdraw-queued-message": {
         const receiptId = value.queuedMessageId;
         if (!receiptId) {
@@ -3215,14 +3255,20 @@ export class FeishuBridge {
             note = this.t("feishu.bridge.selectInspectionPrompt");
         }
         if (action?.option === "tasks" || action?.option === "task" || action?.option === "health" || action?.option === "account" || action?.option === "limits") {
-          await this.replyTaskInspectionSnapshotCard({
+          const snapshotNote = note ?? this.t("feishu.bridge.selectInspectionPrompt");
+          this.runCardActionFollowUp(`task.inspect.global.${action.option}`, async () => {
+            await this.replyTaskInspectionSnapshotCard({
+              task,
+              binding,
+              queryLabel,
+              note: snapshotNote,
+              replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
+            });
+          });
+          return this.buildCurrentTaskResponseCard({
             task,
             binding,
-            queryLabel,
-            note,
-            replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
           });
-          return;
         }
         break;
       }

@@ -470,7 +470,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(openImportResult, undefined);
+      assert.ok(openImportResult);
       await waitFor(
         () =>
           harness.requests.filter(
@@ -874,7 +874,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(statusResult, undefined);
+      assert.ok(statusResult);
       await waitFor(
         () =>
           harness.requests.filter(
@@ -1038,7 +1038,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
           },
         });
 
-        assert.equal(result, undefined);
+        assert.ok(result);
         await waitFor(
           () =>
             harness.requests.filter(
@@ -1302,7 +1302,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(openRenameResult, undefined);
+      assert.ok(openRenameResult);
       await waitFor(
         () =>
           harness.requests.filter(
