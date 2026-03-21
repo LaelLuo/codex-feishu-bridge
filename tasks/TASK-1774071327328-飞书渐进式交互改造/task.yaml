@@ -1,15 +1,14 @@
 id: TASK-1774071327328-飞书渐进式交互改造
 title: 飞书渐进式交互改造
-status: draft
+status: in_progress
 archived: false
 created_at: '2026-03-21T13:35:27.327Z'
-updated_at: '2026-03-21T13:35:27.327Z'
+updated_at: '2026-03-21T08:37:45.4347345Z'
 related_repos:
   - F:\Projects\NodeProjects\codex-feishu-bridge
 depends_on:
   - TASK-1774071327327-飞书交互语言配置
-blocked_by:
-  - TASK-1774071327327-飞书交互语言配置
+blocked_by: []
 tags:
   - feishu
   - ux

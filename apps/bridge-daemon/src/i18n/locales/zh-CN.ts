@@ -6,6 +6,7 @@ export const ZH_CN_MESSAGES: FeishuMessages = {
   "feishu.cardTest.title": "Codex Bridge 卡片测试",
   "feishu.cardTest.description": "使用下方按钮验证 `card.action.trigger` 能否通过飞书长连接到达 bridge。",
   "feishu.cardTest.result": "结果",
+  "feishu.agentReply.title": "Codex 回复",
   "feishu.sections.prompt": "提示词",
   "feishu.sections.settings": "配置",
   "feishu.sections.update": "更新",

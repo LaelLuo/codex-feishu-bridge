@@ -40,6 +40,28 @@ function parseMessageText(request: RequestRecord): string {
   }
 }
 
+function parseInteractiveCard(request: RequestRecord): Record<string, unknown> | null {
+  const payload = JSON.parse(request.body ?? "{}") as { content?: string; msg_type?: string };
+  if ((payload.msg_type !== undefined && payload.msg_type !== "interactive") || !payload.content) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(payload.content) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function requestContainsCardText(request: RequestRecord, needle: string): boolean {
+  const card = parseInteractiveCard(request);
+  if (!card) {
+    return false;
+  }
+
+  return JSON.stringify(card).includes(needle);
+}
+
 async function waitFor(check: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (check()) {
@@ -513,6 +535,51 @@ describe("feishu bridge", { concurrency: 1 }, () => {
       await waitFor(
         () => harness.requests.some((request) => parseMessageText(request).includes("Second imported answer")),
         "imported delta reply sync",
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("renders markdown-heavy agent replies as interactive cards instead of plain text messages", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Markdown delta task",
+      });
+      await harness.service.bindFeishuThread(task.taskId, {
+        chatId: "oc_chat_id",
+        threadKey: "omt_markdown_delta",
+        rootMessageId: "om_root_markdown_delta",
+      });
+
+      const boundTask = harness.service.getTask(task.taskId);
+      assert.ok(boundTask);
+
+      await (harness.service as any).emitEvent(task.taskId, "task.updated", {
+        task: boundTask,
+        importedConversationDelta: [
+          {
+            messageId: "thread-markdown:imported:2",
+            author: "agent",
+            surface: "runtime",
+            content: "# Deploy Plan\n- step 1\n- step 2\n```ts\nconsole.log('ok');\n```",
+            createdAt: "2026-03-19T00:00:04.000Z",
+          },
+        ],
+      });
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardText(request, "# Deploy Plan")),
+        "markdown reply card sync",
+      );
+      assert.equal(
+        harness.requests.some(
+          (request) =>
+            request.method === "POST" && request.url.includes("/open-apis/im/v1/messages/") && parseMessageText(request).includes("# Deploy Plan"),
+        ),
+        false,
       );
     } finally {
       await harness.cleanup();

@@ -16,6 +16,7 @@ import { readJsonFile, writeJsonFile, type BridgeConfig, type Logger } from "@co
 import { BridgeService, type BridgeServiceEvent } from "../service/bridge-service";
 import {
   createArchivedThreadCard,
+  createAgentReplyCard,
   createCardTestCard,
   createDraftCard,
   createTaskActivityCard,
@@ -670,6 +671,22 @@ function truncateReplyText(text: string): string {
   }
 
   return `${normalized.slice(0, FEISHU_REPLY_MAX_CHARS - 16)}\n\n[truncated]`;
+}
+
+function shouldRenderReplyAsMarkdownCard(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /```[\s\S]*```/.test(normalized) ||
+    /(^|\n)\s*#{1,6}\s+\S/.test(normalized) ||
+    /(^|\n)\s*(?:[-*+]\s+|\d+\.\s+)/.test(normalized) ||
+    /\*\*[^*\n]+\*\*/.test(normalized) ||
+    /`[^`\n]+`/.test(normalized) ||
+    /(^|\n)\|.+\|/.test(normalized)
+  );
 }
 
 function summarizeIncomingMessage(
@@ -3209,6 +3226,19 @@ export class FeishuBridge {
   }
 
   private async replyToMessage(messageId: string, text: string): Promise<string> {
+    const normalized = truncateReplyText(text);
+    if (shouldRenderReplyAsMarkdownCard(normalized)) {
+      return this.sendCardReply(
+        messageId,
+        createAgentReplyCard(
+          {
+            content: normalized,
+          },
+          { locale: this.options.config.feishuUiLanguage },
+        ),
+      );
+    }
+
     const response = await this.requestFeishu<FeishuSendMessageResponse>(
       `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reply`,
       {
@@ -3216,7 +3246,7 @@ export class FeishuBridge {
         body: JSON.stringify({
           msg_type: "text",
           reply_in_thread: true,
-          content: JSON.stringify({ text: truncateReplyText(text) }),
+          content: JSON.stringify({ text: normalized }),
         }),
       },
     );

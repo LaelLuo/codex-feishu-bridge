@@ -100,6 +100,10 @@ export interface FeishuArchivedThreadCardData {
   note?: string;
 }
 
+export interface FeishuAgentReplyCardData {
+  content: string;
+}
+
 export type FeishuCardActionKind =
   | "test.ping"
   | "draft.select.model"
@@ -523,6 +527,26 @@ export function createCardTestCard(note?: string, options: FeishuCardRenderOptio
       markdown(t("feishu.cardTest.description")),
       ...(normalizedNote ? [divider(), markdown(`**${t("feishu.cardTest.result")}**\n${normalizedNote}`)] : []),
     ],
+  };
+}
+
+export function createAgentReplyCard(
+  data: FeishuAgentReplyCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
+
+  return {
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+    },
+    header: {
+      title: plainText(t("feishu.agentReply.title")),
+      template: "blue",
+    },
+    elements: [markdown(data.content)],
   };
 }
 

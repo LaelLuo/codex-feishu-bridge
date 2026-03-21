@@ -3,6 +3,7 @@ export const EN_US_MESSAGES = {
   "feishu.cardTest.description":
     "Use the button below to verify that `card.action.trigger` reaches the bridge over Feishu long connection.",
   "feishu.cardTest.result": "Result",
+  "feishu.agentReply.title": "Codex Reply",
   "feishu.sections.prompt": "Prompt",
   "feishu.sections.settings": "Settings",
   "feishu.sections.update": "Update",
