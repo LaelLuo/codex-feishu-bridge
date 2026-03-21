@@ -2850,70 +2850,82 @@ export class FeishuBridge {
           return;
         }
         case "draft.create": {
-          const executionProfile: TaskExecutionProfile = {
-            ...(draft.model ? { model: draft.model } : {}),
-            ...(draft.effort ? { effort: draft.effort } : {}),
-            ...(draft.planMode ? { planMode: true } : {}),
-            sandbox: draft.sandbox,
-            approvalPolicy: draft.approvalPolicy,
-          };
+          const pendingCreateNote = this.t("feishu.bridge.creatingTaskOnHost");
+          this.runCardActionFollowUp("draft.create", async () => {
+            const executionProfile: TaskExecutionProfile = {
+              ...(draft.model ? { model: draft.model } : {}),
+              ...(draft.effort ? { effort: draft.effort } : {}),
+              ...(draft.planMode ? { planMode: true } : {}),
+              sandbox: draft.sandbox,
+              approvalPolicy: draft.approvalPolicy,
+            };
 
-          const task = await this.options.service.createTask({
-            title: createTaskTitleFromDraft(draft),
-            executionProfile,
-            replyToFeishu: true,
-          });
-          this.deleteArchivedThread(binding);
-          await this.options.service.bindFeishuThread(task.taskId, binding);
-          const attachmentAssetIds = await this.uploadDraftAttachmentsToTask(task.taskId, draft);
-          this.deleteThreadDraft(binding);
-
-          const boundTask = this.options.service.getTask(task.taskId) ?? task;
-          const initialMessageQueued = Boolean(draft.prompt?.trim() || attachmentAssetIds.length);
-          const createdTaskNote = formatCreatedTaskNotice(task.taskId, initialMessageQueued, this.t);
-          const messageId = event?.open_message_id ?? draft.cardMessageId;
-          if (messageId) {
-            await this.saveThreadTaskCard({
-              chatId: binding.chatId,
-              threadKey: binding.threadKey,
-              rootMessageId: binding.rootMessageId,
-              taskId: task.taskId,
-              messageId,
-              revision: 0,
-              note: createdTaskNote,
-            });
-          }
-
-          if (initialMessageQueued) {
-            void this.options.service
-              .sendMessage(task.taskId, {
-                content: draft.prompt ?? "",
-                assetIds: attachmentAssetIds,
-                source: "feishu",
-                replyToFeishu: true,
+            try {
+              const task = await this.options.service.createTask({
+                title: createTaskTitleFromDraft(draft),
                 executionProfile,
-              })
-              .catch((error) => {
-                this.options.logger.warn("failed to queue initial draft prompt from card create", {
-                  taskId: task.taskId,
-                  error,
-                });
+                replyToFeishu: true,
               });
-          }
+              this.deleteArchivedThread(binding);
+              await this.options.service.bindFeishuThread(task.taskId, binding);
+              const attachmentAssetIds = await this.uploadDraftAttachmentsToTask(task.taskId, draft);
+              this.deleteThreadDraft(binding);
 
-          return (
-            (await this.renderTaskControlCard({
-              task: boundTask,
-              binding,
-              note: createdTaskNote,
-            })) ??
-            (await this.buildTaskControlCard(
-              boundTask,
-              binding,
-              (this.getThreadTaskCard(binding)?.revision ?? 0) + 1,
-              createdTaskNote,
-            ))
-          );
+              const boundTask = this.options.service.getTask(task.taskId) ?? task;
+              const initialMessageQueued = Boolean(draft.prompt?.trim() || attachmentAssetIds.length);
+              const createdTaskNote = formatCreatedTaskNotice(task.taskId, initialMessageQueued, this.t);
+              const messageId = event?.open_message_id ?? draft.cardMessageId;
+              if (messageId) {
+                await this.saveThreadTaskCard({
+                  chatId: binding.chatId,
+                  threadKey: binding.threadKey,
+                  rootMessageId: binding.rootMessageId,
+                  taskId: task.taskId,
+                  messageId,
+                  revision: 0,
+                  note: createdTaskNote,
+                });
+              }
+
+              if (initialMessageQueued) {
+                void this.options.service
+                  .sendMessage(task.taskId, {
+                    content: draft.prompt ?? "",
+                    assetIds: attachmentAssetIds,
+                    source: "feishu",
+                    replyToFeishu: true,
+                    executionProfile,
+                  })
+                  .catch((error) => {
+                    this.options.logger.warn("failed to queue initial draft prompt from card create", {
+                      taskId: task.taskId,
+                      error,
+                    });
+                  });
+              }
+
+              await this.renderTaskControlCard({
+                task: boundTask,
+                binding,
+                note: createdTaskNote,
+                ...(messageId ? {} : { forceReply: true }),
+              });
+            } catch (error) {
+              const errorNote = error instanceof Error ? error.message : String(error);
+              draft.note = errorNote;
+              await this.renderDraftCard({
+                binding,
+                draft,
+                note: errorNote,
+              });
+            }
+          });
+
+          return this.buildCurrentDraftResponseCard({
+            binding,
+            draft,
+            note: pendingCreateNote,
+          });
         }
         default:
           draft.note = this.t("feishu.bridge.unsupportedDraftAction", { kind: value.kind });

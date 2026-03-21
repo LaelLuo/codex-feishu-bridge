@@ -181,6 +181,7 @@ export const ZH_CN_MESSAGES: FeishuMessages = {
   "feishu.bridge.emptyThreadIdBeforeSubmitting": "提交前请先输入非空线程 ID。",
   "feishu.bridge.importThreadNotFound": "没有找到线程 {threadId} 对应的运行时会话。",
   "feishu.bridge.threadImportedAndBound": "已导入线程 {threadId}，并把当前飞书话题绑定到任务 {taskId}。",
+  "feishu.bridge.creatingTaskOnHost": "正在主机上创建任务；准备好后这张卡会自动更新。",
   "feishu.bridge.forcedQueuedMessage": "已强制让这条排队消息立即运行。",
   "feishu.bridge.missingQueuedMessageId": "这张动态卡片缺少 queued-message id。",
   "feishu.bridge.selectInspectionPrompt": "请选择任务、任务列表、健康度、账号或额度之一。",

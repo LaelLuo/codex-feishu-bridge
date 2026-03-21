@@ -10,3 +10,6 @@
 - 2026-03-21T11:50:00.000Z [agent] 已验证 `feishu-cards`、`feishu-long-connection`、`feishu-webhook` 三组相关测试与 `apps/bridge-daemon` TypeScript 检查均通过。
 - 2026-03-21T12:10:00.000Z [agent] 修复长连接按钮“实际成功但飞书提示超时失败”的问题：对 rename/import/status/inspection 等卡片动作改为先同步返回 card payload，再在后台完成回复卡 follow-up。
 - 2026-03-21T12:10:00.000Z [agent] 已补充长连接测试，要求这些动作不再返回 `undefined`，从而覆盖“即时响应”这条契约。
+- 2026-03-21T12:41:38.7469736Z [agent] 继续收敛 `draft.create`（“在主机上开始”）超时问题：该动作已改成先同步返回当前 draft card，并在后台完成 task create/bind/card patch。
+- 2026-03-21T12:41:38.7469736Z [agent] 调整长连接测试契约：不再要求 `draft.create` 立即返回最终 task card，而是等待 Feishu 线程绑定完成，以及后台把 draft card patch 成 bound task card。
+- 2026-03-21T12:41:38.7469736Z [agent] 已重新验证 `bun test apps/bridge-daemon/tests/feishu-cards.test.ts apps/bridge-daemon/tests/feishu-long-connection.test.ts apps/bridge-daemon/tests/feishu-webhook.test.ts` 与 `bun run tsc --noEmit --skipLibCheck` 全部通过。

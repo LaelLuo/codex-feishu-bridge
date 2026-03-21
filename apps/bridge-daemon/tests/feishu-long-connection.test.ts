@@ -253,16 +253,30 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      await waitFor(() => harness.service.listTasks().length === 1, "task creation");
+      assert.ok(createdCard);
+      assert.match(JSON.stringify(createdCard), /Creating the host task now/);
+      await waitFor(
+        () => harness.service.listTasks()[0]?.feishuBinding?.threadKey === "omt_new_task",
+        "task binding after draft create",
+      );
       const createdTask = harness.service.listTasks()[0];
       assert.ok(createdTask);
       assert.equal(createdTask?.feishuBinding?.threadKey, "omt_new_task");
       assert.equal(createdTask?.executionProfile.model, "gpt-5.4-mini");
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_card_new_task") &&
+              requestContainsCardTitle(request, `Task: ${createdTask.title}`),
+          ),
+        "draft card patched into task control card",
+      );
       assert.equal(
         harness.calls.some((entry) => entry.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")),
         false,
       );
-      assert.match(JSON.stringify(createdCard), /Task: hello before binding/);
 
       await waitFor(
         () => harness.requests.some((request) => parseMessageText(request).includes("Mock response for: hello before binding")),
@@ -597,11 +611,28 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      await waitFor(() => harness.service.listTasks().length === 1, "task creation from model draft");
+      assert.ok(createCard);
+      assert.match(JSON.stringify(createCard), /Creating the host task now/);
+      await waitFor(
+        () => harness.service.listTasks()[0]?.feishuBinding?.threadKey === "omt_models",
+        "task creation from model draft",
+      );
       const task = harness.service.listTasks()[0];
       assert.equal(task?.executionProfile.model, "gpt-5.4-mini");
       assert.equal(task?.executionProfile.effort, "low");
-      assert.match(JSON.stringify(createCard), /Created task/);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_card_models") &&
+              requestContainsCardText(
+                request,
+                "Send the first plain-text message in this thread to start the first turn.",
+              ),
+          ),
+        "patched task control card after model draft create",
+      );
     } finally {
       await harness.cleanup();
     }
@@ -677,14 +708,28 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      await waitFor(() => harness.service.listTasks().length === 1, "mobile task creation");
+      await waitFor(
+        () => harness.service.listTasks()[0]?.feishuBinding?.threadKey === "omt_mobile",
+        "mobile task creation",
+      );
       assert.ok(createCard);
-      assert.match(JSON.stringify(createCard), /Created task/);
-      assert.match(JSON.stringify(createCard), /Next Step/);
-      assert.match(JSON.stringify(createCard), /send the first plain-text message in this thread to start the first turn/i);
+      assert.match(JSON.stringify(createCard), /Creating the host task now/);
       assert.equal(
         harness.calls.some((entry) => entry.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")),
         false,
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardText(
+                request,
+                "Send the first plain-text message in this thread to start the first turn.",
+              ),
+          ),
+        "mobile task control card patch",
       );
       assert.ok(
         harness.requests.filter(
