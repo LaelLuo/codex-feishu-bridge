@@ -86,6 +86,13 @@ export interface FeishuTaskRenameCardData {
   note?: string;
 }
 
+export interface FeishuDraftImportCardData {
+  binding: FeishuThreadBinding;
+  revision: number;
+  note?: string;
+  defaultThreadId?: string;
+}
+
 export interface FeishuTaskInspectionSnapshotCardData {
   task: BridgeTask;
   queryLabel: string;
@@ -106,11 +113,13 @@ export interface FeishuAgentReplyCardData {
 
 export type FeishuCardActionKind =
   | "test.ping"
+  | "draft.more"
   | "draft.select.model"
   | "draft.select.effort"
   | "draft.toggle.plan-mode"
   | "draft.select.sandbox"
   | "draft.select.approval"
+  | "draft.import.submit"
   | "draft.use-defaults"
   | "draft.create"
   | "draft.cancel"
@@ -679,6 +688,17 @@ export function createDraftCard(
           }),
         }),
       ]),
+      action([
+        overflow({
+          text: t("feishu.taskControl.more"),
+          options: [
+            { label: t("feishu.draft.more.importThread"), value: "import" },
+          ],
+          value: baseActionValue("draft.more", data.binding, {
+            revision: data.revision,
+          }),
+        }),
+      ]),
     ],
   };
 }
@@ -898,6 +918,49 @@ export function createTaskRenameCard(
             type: "primary",
             value: baseActionValue("task.rename.submit", binding, {
               taskId: task.taskId,
+              revision,
+            }),
+          }),
+        ]),
+      ]),
+    ],
+  };
+}
+
+export function createDraftImportCard(
+  data: FeishuDraftImportCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
+  const note = truncateNote(data.note);
+  const { binding, revision } = data;
+
+  return {
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+    },
+    header: {
+      title: plainText(t("feishu.import.title")),
+      template: "blue",
+    },
+    elements: [
+      markdown(t("feishu.import.intro")),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
+      divider(),
+      form([
+        inputField({
+          name: "thread_id_input",
+          label: t("feishu.sections.threadId"),
+          placeholder: t("feishu.import.placeholder"),
+          defaultValue: data.defaultThreadId,
+        }),
+        action([
+          formSubmitButton({
+            text: t("feishu.import.apply"),
+            type: "primary",
+            value: baseActionValue("draft.import.submit", binding, {
               revision,
             }),
           }),

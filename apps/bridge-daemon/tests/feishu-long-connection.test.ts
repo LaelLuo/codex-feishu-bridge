@@ -7,6 +7,7 @@ import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bri
 
 import { FeishuBridge } from "../src/feishu/bridge";
 import { createCodexRuntime } from "../src/runtime";
+import { MockCodexRuntime } from "../src/runtime/mock-codex-runtime";
 import { BridgeService } from "../src/service/bridge-service";
 import { createTestBridgeConfig } from "./test-paths";
 
@@ -404,6 +405,116 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       assert.equal(
         harness.requests.some((request) => requestContainsCardText(request, "恢复默认配置")),
         true,
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("imports an existing runtime thread from the draft-card More menu and binds it to the current Feishu thread", async () => {
+    const harness = await createHarness();
+
+    try {
+      const externalThread = (harness.runtime as MockCodexRuntime).seedExternalThread({
+        id: "thr_import_from_card",
+        name: "External CLI thread",
+      });
+
+      await harness.onMessage(
+        {
+          message_id: "om_plain_import",
+          thread_id: "omt_import_task",
+          root_id: "om_root_import_task",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "bind an existing thread here" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_import_card",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
+        "draft card reply before import",
+      );
+
+      const draftEntries = (
+        harness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string }> }
+      ).threadDrafts;
+      const draftCard = draftEntries.get("oc_chat_id:omt_import_task");
+      assert.ok(draftCard?.cardMessageId);
+
+      const previousImportReplyCount = harness.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.url.includes("/open-apis/im/v1/messages/") &&
+          requestContainsCardTitle(request, "Import Existing Thread"),
+      ).length;
+
+      const openImportResult = await harness.onCardAction({
+        open_message_id: draftCard?.cardMessageId,
+        open_id: "ou_import_card",
+        action: {
+          tag: "overflow",
+          option: "import",
+          value: {
+            kind: "draft.more",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_task",
+            rootMessageId: "om_root_import_task",
+            revision: 1,
+          },
+        },
+      });
+
+      assert.equal(openImportResult, undefined);
+      await waitFor(
+        () =>
+          harness.requests.filter(
+            (request) =>
+              request.method === "POST" &&
+              request.url.includes("/open-apis/im/v1/messages/") &&
+              requestContainsCardTitle(request, "Import Existing Thread"),
+          ).length > previousImportReplyCount,
+        "import card reply",
+      );
+
+      const submitImportResult = await harness.onCardAction({
+        open_message_id: "om_import_card",
+        open_id: "ou_import_card",
+        action: {
+          tag: "button",
+          form_value: {
+            thread_id_input: externalThread.id,
+          },
+          value: {
+            kind: "draft.import.submit",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_task",
+            rootMessageId: "om_root_import_task",
+            revision: 2,
+          },
+        },
+      });
+
+      assert.equal(submitImportResult, undefined);
+      await waitFor(
+        () => harness.service.getTask(externalThread.id)?.feishuBinding?.threadKey === "omt_import_task",
+        "imported task binding",
+      );
+      assert.equal(harness.service.getTask(externalThread.id)?.mode, "manual-import");
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${draftCard?.cardMessageId}`) &&
+              requestContainsCardTitle(request, "Task: External CLI thread"),
+          ),
+        "draft card replaced by task control card after import",
       );
     } finally {
       await harness.cleanup();

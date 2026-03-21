@@ -12,6 +12,7 @@ export const EN_US_MESSAGES = {
   "feishu.sections.currentTask": "Current Task",
   "feishu.sections.currentTitle": "Current Title",
   "feishu.sections.newTitle": "New title",
+  "feishu.sections.threadId": "Thread ID",
   "feishu.sections.receipt": "Receipt",
   "feishu.sections.status": "Status",
   "feishu.sections.details": "Details",
@@ -69,6 +70,7 @@ export const EN_US_MESSAGES = {
   "feishu.draft.resetDefaults": "Reset to Defaults",
   "feishu.draft.createOnHost": "Create on Host",
   "feishu.draft.discard": "Discard Draft",
+  "feishu.draft.more.importThread": "Import Existing Thread",
   "feishu.taskControl.title": "Task: {title}",
   "feishu.taskControl.intro": "This thread stays attached to the same host task.",
   "feishu.taskControl.viewStatus": "View Status",
@@ -90,6 +92,11 @@ export const EN_US_MESSAGES = {
   "feishu.rename.intro": "Renames the shared bridge task in both VSCode and Feishu.",
   "feishu.rename.placeholder": "Enter the new task title",
   "feishu.rename.apply": "Apply New Title",
+  "feishu.import.title": "Import Existing Thread",
+  "feishu.import.intro":
+    "Import a Codex thread that already exists on the host, then bind this Feishu thread to it.",
+  "feishu.import.placeholder": "Enter the Codex thread ID",
+  "feishu.import.apply": "Import and Bind",
   "feishu.activity.title": "Task Activity: {title}",
   "feishu.activity.withdraw": "Withdraw This Message",
   "feishu.activity.runNow": "Run This Message Now",
@@ -187,6 +194,13 @@ export const EN_US_MESSAGES = {
   "feishu.bridge.renameSubmitPrompt":
     "Submit a new task title here to update both Feishu and the VSCode monitor.",
   "feishu.bridge.taskRenamedTo": "Task renamed to {title}.",
+  "feishu.bridge.importSubmitPrompt":
+    "Enter an existing Codex thread ID to import it into this Feishu thread.",
+  "feishu.bridge.selectDraftMorePrompt": "Select Import Existing Thread to continue.",
+  "feishu.bridge.emptyThreadIdBeforeSubmitting": "Enter a non-empty thread ID before submitting.",
+  "feishu.bridge.importThreadNotFound": "No runtime thread was found for {threadId}.",
+  "feishu.bridge.threadImportedAndBound":
+    "Imported thread {threadId} and bound this Feishu thread to task {taskId}.",
   "feishu.bridge.forcedQueuedMessage": "Forced this queued Feishu message to run immediately.",
   "feishu.bridge.missingQueuedMessageId": "This activity card is missing its queued-message id.",
   "feishu.bridge.selectInspectionPrompt": "Select one of Task, Tasks, Health, Account, or Limits.",
