@@ -224,6 +224,42 @@ describe("feishu card builders", () => {
     assert.match(taskJson, /queued next-turn messages: 2/);
   });
 
+  it("renders draft cards in Chinese when the locale is zh-CN", () => {
+    const draftCard = createDraftCard(
+      {
+        prompt: "检查当前 bridge 状态。",
+        model: "gpt-5.4",
+        effort: "high",
+        planMode: true,
+        sandbox: "workspace-write",
+        approvalPolicy: "on-request",
+        binding: BINDING,
+        revision: 3,
+        note: "已从卡片更新模型。",
+        attachmentSummary: "1 张图片",
+        modelOptions: [
+          {
+            id: "gpt-5.4",
+            displayName: "GPT-5.4",
+            isDefault: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+            defaultReasoningEffort: "medium",
+          },
+        ],
+      },
+      { locale: "zh-CN" },
+    );
+
+    const draftJson = JSON.stringify(draftCard);
+    assert.match(draftJson, /创建 Codex 任务/);
+    assert.match(draftJson, /在这个话题里发送文本、照片或文件来整理需求。准备好后点击“在主机上开始”。/);
+    assert.match(draftJson, /在主机上开始/);
+    assert.match(draftJson, /恢复默认配置/);
+    assert.match(draftJson, /丢弃草稿/);
+    assert.match(draftJson, /规划模式：开/);
+    assert.match(draftJson, /更新/);
+  });
+
   it("renders a dedicated rename card with a text input that submits form values", () => {
     const task = createBridgeTask({
       threadId: "thr-rename-task",

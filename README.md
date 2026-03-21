@@ -42,6 +42,7 @@ bun run monitor:all
 - `FEISHU_APP_SECRET`
 - `FEISHU_DEFAULT_CHAT_ID`
 - `FEISHU_DEFAULT_CHAT_NAME`
+- `FEISHU_UI_LANGUAGE`
 
 ### 2. 宿主机原生启动：`start:host`
 
@@ -92,15 +93,20 @@ bun run monitor:tcp-proxy
 docker/.env
 ```
 
-通常只需要确认这 3 项：
+通常只需要确认这 3 项；如果你想把飞书交互切成中文，再额外补一项：
 
 ```env
 FEISHU_APP_ID=你的 App ID
 FEISHU_APP_SECRET=你的 App Secret
 FEISHU_DEFAULT_CHAT_NAME=你的飞书群名
+FEISHU_UI_LANGUAGE=zh-CN
 ```
 
-前两项来自飞书开放平台的应用后台，最后一项填你要接收消息的那个飞书群名。
+前两项来自飞书开放平台的应用后台，`FEISHU_DEFAULT_CHAT_NAME` 填你要接收消息的那个飞书群名。
+`FEISHU_UI_LANGUAGE` 目前支持：
+
+- `en-US`：默认英文交互
+- `zh-CN`：飞书卡片、按钮、基础引导和首批通知文案切换为中文
 
 如果你已经知道群 ID，也可以改成：
 
@@ -110,6 +116,7 @@ FEISHU_DEFAULT_CHAT_ID=oc_xxx
 
 `FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` 只决定 bridge 主动新建飞书话题时默认落到哪个群，例如 VSCode monitor 里的 `Bind to New Feishu Topic`。
 它们不会限制私聊收消息，也不会限制你在其他已加机器人的群里手动起线程；入站消息始终以 Feishu 事件里真实的 `chat_id` 为准。
+`FEISHU_UI_LANGUAGE` 是全局配置，不按群聊、私聊或单个任务单独覆盖。
 
 ### 5. 再确认飞书三件事
 

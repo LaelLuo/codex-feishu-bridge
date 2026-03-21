@@ -8,6 +8,8 @@ import type {
   SandboxMode,
   TaskExecutionProfile,
 } from "@codex-feishu-bridge/protocol";
+import type { FeishuUiLanguage } from "@codex-feishu-bridge/shared";
+import { createFeishuTranslator } from "../i18n";
 
 const DEFAULT_NEW_SANDBOX: SandboxMode = "workspace-write";
 const DEFAULT_NEW_APPROVAL_POLICY: ApprovalPolicy = "on-request";
@@ -141,6 +143,10 @@ export interface FeishuCardActionValue {
 type FeishuCardActionValueExtras = Partial<Omit<FeishuCardActionValue, "kind" | "chatId" | "threadKey" | "rootMessageId">> & {
   revision?: number | string;
 };
+
+interface FeishuCardRenderOptions {
+  locale?: FeishuUiLanguage;
+}
 
 function plainText(content: string): { tag: "plain_text"; content: string } {
   return {
@@ -276,13 +282,25 @@ function truncateNote(value: string | undefined): string | undefined {
   return `${trimmed.slice(0, CARD_NOTE_MAX_CHARS - 16)}\n\n[truncated]`;
 }
 
-function formatExecutionProfile(profile: TaskExecutionProfile | undefined): string[] {
+function titleCaseLabel(value: string): string {
+  if (!value) {
+    return value;
+  }
+
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function formatExecutionProfile(
+  profile: TaskExecutionProfile | undefined,
+  locale: FeishuUiLanguage,
+): string[] {
+  const t = createFeishuTranslator(locale);
   return [
-    `model: ${profile?.model ?? "runtime-default"}`,
-    `effort: ${profile?.effort ?? "model-default"}`,
-    `planMode: ${profile?.planMode ? "on" : "off"}`,
-    `sandbox: ${profile?.sandbox ?? DEFAULT_NEW_SANDBOX}`,
-    `approvalPolicy: ${profile?.approvalPolicy ?? DEFAULT_NEW_APPROVAL_POLICY}`,
+    `${t("feishu.labels.model")}: ${profile?.model ?? t("feishu.values.runtimeDefault")}`,
+    `${t("feishu.labels.effort")}: ${profile?.effort ?? t("feishu.values.modelDefault")}`,
+    `${t("feishu.labels.planMode")}: ${profile?.planMode ? t("feishu.values.on") : t("feishu.values.off")}`,
+    `${t("feishu.labels.sandbox")}: ${profile?.sandbox ?? DEFAULT_NEW_SANDBOX}`,
+    `${t("feishu.labels.approvalPolicy")}: ${profile?.approvalPolicy ?? DEFAULT_NEW_APPROVAL_POLICY}`,
   ];
 }
 
@@ -298,22 +316,27 @@ function resolveOptionLabel(
   return options.find((option) => option.value === value)?.label ?? value;
 }
 
-function formatFeishuRunningMessageMode(mode: FeishuRunningMessageMode): string {
-  return mode === "queue" ? "queue next turn" : "steer current turn";
+function formatFeishuRunningMessageMode(mode: FeishuRunningMessageMode, locale: FeishuUiLanguage): string {
+  const t = createFeishuTranslator(locale);
+  return mode === "queue" ? t("feishu.values.queueNextTurn") : t("feishu.values.steerCurrentTurn");
 }
 
-function formatTaskActivityReceiptState(state: FeishuTaskActivityCardData["receiptState"]): string {
+function formatTaskActivityReceiptState(
+  state: FeishuTaskActivityCardData["receiptState"],
+  locale: FeishuUiLanguage,
+): string {
+  const t = createFeishuTranslator(locale);
   switch (state) {
     case "queued":
-      return "queued for the next turn";
+      return t("feishu.receipts.queued");
     case "started":
-      return "started as its own turn";
+      return t("feishu.receipts.started");
     case "steered":
-      return "sent into the current turn";
+      return t("feishu.receipts.steered");
     case "withdrawn":
-      return "withdrawn before it ran";
+      return t("feishu.receipts.withdrawn");
     case "failed":
-      return "failed to deliver";
+      return t("feishu.receipts.failed");
     default:
       return state;
   }
@@ -323,91 +346,94 @@ function formatTaskActivityState(
   task: BridgeTask,
   runtimeConnected: boolean,
   runtimeInitialized: boolean,
+  locale: FeishuUiLanguage,
 ): {
   label: string;
   detail: string;
   template: NonNullable<FeishuInteractiveCard["header"]>["template"];
 } {
+  const t = createFeishuTranslator(locale);
   if (!runtimeConnected || !runtimeInitialized) {
     return {
-      label: "offline",
-      detail: "The host runtime is not connected right now.",
+      label: t("feishu.activityState.offline.label"),
+      detail: t("feishu.activityState.offline.detail"),
       template: "grey",
     };
   }
 
   if (task.status === "failed") {
     return {
-      label: "failed",
-      detail: "The last turn failed. Review the error or retry from the main task card.",
+      label: t("feishu.activityState.failed.label"),
+      detail: t("feishu.activityState.failed.detail"),
       template: "red",
     };
   }
 
   if (task.queuedMessageCount > 0) {
     return {
-      label: "queued",
+      label: t("feishu.activityState.queued.label"),
       detail:
         task.status === "awaiting-approval"
-          ? "Your newest Feishu message is queued, but the current turn is waiting for approval before it can run."
+          ? t("feishu.activityState.queued.awaitingApproval")
           : task.status === "blocked"
-            ? "Your newest Feishu message is queued, but the current turn is blocked on user input."
+            ? t("feishu.activityState.queued.blocked")
             : task.status === "running"
-              ? "Codex is still thinking on the current turn. Your newest Feishu message is queued behind it."
-              : "A queued Feishu message is waiting to start.",
+              ? t("feishu.activityState.queued.running")
+              : t("feishu.activityState.queued.idle"),
       template: "orange",
     };
   }
 
   if (task.status === "awaiting-approval") {
     return {
-      label: "waiting for approval",
-      detail: "A pending approval must be resolved before the queued Feishu message can run.",
+      label: t("feishu.activityState.waitingApproval.label"),
+      detail: t("feishu.activityState.waitingApproval.detail"),
       template: "yellow",
     };
   }
 
   if (task.status === "blocked") {
     return {
-      label: "blocked",
-      detail: "The host task is waiting on user input before it can continue.",
+      label: t("feishu.activityState.blocked.label"),
+      detail: t("feishu.activityState.blocked.detail"),
       template: "orange",
     };
   }
 
   if (task.status === "running") {
     return {
-      label: "thinking",
-      detail: "Codex is actively working on the current turn.",
+      label: t("feishu.activityState.running.label"),
+      detail: t("feishu.activityState.running.detail"),
       template: "turquoise",
     };
   }
 
   if (task.status === "completed" || task.status === "interrupted" || task.status === "idle") {
     return {
-      label: "idle",
-      detail: "No busy turn is active right now.",
+      label: t("feishu.activityState.idle.label"),
+      detail: t("feishu.activityState.idle.detail"),
       template: "green",
     };
   }
 
   return {
     label: task.status,
-    detail: `Current task status: ${task.status}.`,
+    detail: t("feishu.activityState.fallback.detail", { status: task.status }),
     template: "blue",
   };
 }
 
-function taskStartGuidance(task: BridgeTask): string[] {
+function taskStartGuidance(task: BridgeTask, locale: FeishuUiLanguage): string[] {
+  const t = createFeishuTranslator(locale);
   if (task.conversation.length > 0) {
     return [];
   }
 
   return [
-    "**Next Step**",
-    "- this task is already created on the workstation and bound to this Feishu thread",
-    "- send the first plain-text message in this thread to start the first turn",
-    "- Create on Host only appears on the draft card before the task exists",
+    `**${t("feishu.sections.nextStep")}**`,
+    t("feishu.taskStartGuidance.created"),
+    t("feishu.taskStartGuidance.firstMessage"),
+    t("feishu.taskStartGuidance.createOnHost"),
   ];
 }
 
@@ -427,7 +453,13 @@ function baseActionValue(
   };
 }
 
-function buildApprovalActionRows(task: BridgeTask, binding: FeishuThreadBinding, revision: number): Array<Record<string, unknown>> {
+function buildApprovalActionRows(
+  task: BridgeTask,
+  binding: FeishuThreadBinding,
+  revision: number,
+  locale: FeishuUiLanguage,
+): Array<Record<string, unknown>> {
+  const t = createFeishuTranslator(locale);
   return task.pendingApprovals
     .filter((approval) => approval.state === "pending")
     .flatMap((approval) => {
@@ -440,25 +472,25 @@ function buildApprovalActionRows(task: BridgeTask, binding: FeishuThreadBinding,
       return [
         markdown(
           [
-            `**Pending Approval**`,
+            `**${t("feishu.sections.pendingApproval")}**`,
             `requestId: ${approval.requestId}`,
-            `kind: ${approval.kind}`,
-            `reason: ${approval.reason}`,
+            `${t("feishu.labels.kind")}: ${approval.kind}`,
+            `${t("feishu.labels.reason")}: ${approval.reason}`,
           ].join("\n"),
         ),
         action([
           button({
-            text: "Approve",
+            text: t("feishu.taskApproval.approve"),
             type: "primary",
             value: baseActionValue("task.approve", binding, { ...value }),
           }),
           button({
-            text: "Decline",
+            text: t("feishu.taskApproval.decline"),
             type: "danger",
             value: baseActionValue("task.decline", binding, { ...value }),
           }),
           button({
-            text: "Cancel Approval",
+            text: t("feishu.taskApproval.cancel"),
             value: baseActionValue("task.cancel-approval", binding, { ...value }),
           }),
         ]),
@@ -474,7 +506,9 @@ export function createCardActionValue(
   return baseActionValue(kind, binding, extras);
 }
 
-export function createCardTestCard(note?: string): FeishuInteractiveCard {
+export function createCardTestCard(note?: string, options: FeishuCardRenderOptions = {}): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const normalizedNote = truncateNote(note);
   return {
     config: {
@@ -482,17 +516,22 @@ export function createCardTestCard(note?: string): FeishuInteractiveCard {
       update_multi: true,
     },
     header: {
-      title: plainText("Codex Bridge Card Test"),
+      title: plainText(t("feishu.cardTest.title")),
       template: "blue",
     },
     elements: [
-      markdown("Use the button below to verify that `card.action.trigger` reaches the bridge over Feishu long connection."),
-      ...(normalizedNote ? [divider(), markdown(`**Result**\n${normalizedNote}`)] : []),
+      markdown(t("feishu.cardTest.description")),
+      ...(normalizedNote ? [divider(), markdown(`**${t("feishu.cardTest.result")}**\n${normalizedNote}`)] : []),
     ],
   };
 }
 
-export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteractiveCard {
+export function createDraftCard(
+  data: FeishuThreadDraftCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
   const selectedEffort = data.effort;
   const selectedModel = data.model;
@@ -514,33 +553,33 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
       update_multi: true,
     },
     header: {
-      title: plainText("Create Codex Task"),
+      title: plainText(t("feishu.draft.title")),
       template: "blue",
     },
     elements: [
-      markdown("Send text, photos, or files here to build the draft. Tap Create on Host when ready."),
+      markdown(t("feishu.draft.intro")),
       divider(),
-      markdown(`**Prompt**\n${data.prompt?.trim() ? data.prompt : "_Send plain text in this thread to set the prompt._"}`),
+      markdown(`**${t("feishu.sections.prompt")}**\n${data.prompt?.trim() ? data.prompt : t("feishu.draft.promptPlaceholder")}`),
       markdown(
         [
-          "**Settings**",
+          `**${t("feishu.sections.settings")}**`,
           ...formatExecutionProfile({
             model: data.model,
             effort: data.effort,
             planMode: data.planMode,
             sandbox: data.sandbox,
             approvalPolicy: data.approvalPolicy,
-          }),
-          `attachments: ${data.attachmentSummary ?? "none"}`,
+          }, locale),
+          `${t("feishu.labels.attachments")}: ${data.attachmentSummary ?? t("feishu.values.none")}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       divider(),
       ...(modelOptions.length
         ? [
             action([
               selectStatic({
-                placeholder: "Choose model",
+                placeholder: t("feishu.draft.chooseModel"),
                 initialOption: selectedModel,
                 options: modelOptions,
                 value: baseActionValue("draft.select.model", data.binding, {
@@ -548,7 +587,7 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
                 }),
               }),
               selectStatic({
-                placeholder: "Choose reasoning effort",
+                placeholder: t("feishu.draft.chooseReasoning"),
                 initialOption: selectedEffort,
                 options: effortOptions,
                 value: baseActionValue("draft.select.effort", data.binding, {
@@ -560,7 +599,7 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
         : []),
       action([
         selectStatic({
-          placeholder: "Choose sandbox",
+          placeholder: t("feishu.draft.chooseSandbox"),
           initialOption: data.sandbox,
           options: [
             { label: "read-only", value: "read-only" },
@@ -572,7 +611,7 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
           }),
         }),
         selectStatic({
-          placeholder: "Choose approval policy",
+          placeholder: t("feishu.draft.chooseApproval"),
           initialOption: data.approvalPolicy,
           options: [
             { label: "untrusted", value: "untrusted" },
@@ -587,7 +626,7 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
       ]),
       action([
         button({
-          text: `Plan Mode: ${data.planMode ? "On" : "Off"}`,
+          text: data.planMode ? t("feishu.draft.planMode.on") : t("feishu.draft.planMode.off"),
           value: baseActionValue("draft.toggle.plan-mode", data.binding, {
             revision: data.revision,
           }),
@@ -596,20 +635,20 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
       ]),
       action([
         button({
-          text: "Reset to Defaults",
+          text: t("feishu.draft.resetDefaults"),
           value: baseActionValue("draft.use-defaults", data.binding, {
             revision: data.revision,
           }),
         }),
         button({
-          text: "Create on Host",
+          text: t("feishu.draft.createOnHost"),
           type: "primary",
           value: baseActionValue("draft.create", data.binding, {
             revision: data.revision,
           }),
         }),
         button({
-          text: "Discard Draft",
+          text: t("feishu.draft.discard"),
           type: "danger",
           value: baseActionValue("draft.cancel", data.binding, {
             revision: data.revision,
@@ -620,7 +659,12 @@ export function createDraftCard(data: FeishuThreadDraftCardData): FeishuInteract
   };
 }
 
-export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuInteractiveCard {
+export function createTaskControlCard(
+  data: FeishuTaskControlCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
   const { task, binding, revision } = data;
   const selectedModel = task.executionProfile.model;
@@ -640,8 +684,8 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       value: effort,
     }))),
   ];
-  const currentModelLabel = resolveOptionLabel(modelOptions, selectedModel ?? "", "runtime-default");
-  const currentEffortLabel = resolveOptionLabel(effortOptions, selectedEffort ?? "", "model-default");
+  const currentModelLabel = resolveOptionLabel(modelOptions, selectedModel ?? "", t("feishu.values.runtimeDefault"));
+  const currentEffortLabel = resolveOptionLabel(effortOptions, selectedEffort ?? "", t("feishu.values.modelDefault"));
 
   return {
     config: {
@@ -649,45 +693,45 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       update_multi: true,
     },
     header: {
-      title: plainText(`Task: ${task.title}`),
+      title: plainText(t("feishu.taskControl.title", { title: task.title })),
       template: task.status === "failed" ? "red" : task.status === "awaiting-approval" ? "yellow" : "green",
     },
     elements: [
-      markdown("This thread stays attached to the same host task."),
+      markdown(t("feishu.taskControl.intro")),
       divider(),
       ...(task.conversation.length === 0
         ? [
-            markdown(taskStartGuidance(task).join("\n")),
+            markdown(taskStartGuidance(task, locale).join("\n")),
             divider(),
           ]
         : []),
       markdown(
         [
-          `**Task**`,
-          `taskId: ${task.taskId}`,
-          `status: ${task.status}`,
-          ...formatExecutionProfile(task.executionProfile),
-          `busy Feishu replies: ${formatFeishuRunningMessageMode(task.feishuRunningMessageMode)}`,
-          `queued next-turn messages: ${task.queuedMessageCount}`,
-          `attachments: ${task.assets.length}`,
-          `messages: ${task.conversation.length}`,
-          `pending approvals: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
+          `**${t("feishu.sections.task")}**`,
+          `${t("feishu.labels.taskId")}: ${task.taskId}`,
+          `${t("feishu.labels.status")}: ${task.status}`,
+          ...formatExecutionProfile(task.executionProfile, locale),
+          `${t("feishu.labels.busyFeishuReplies")}: ${formatFeishuRunningMessageMode(task.feishuRunningMessageMode, locale)}`,
+          `${t("feishu.labels.queuedNextTurnMessages")}: ${task.queuedMessageCount}`,
+          `${t("feishu.labels.attachments")}: ${task.assets.length}`,
+          `${t("feishu.labels.messages")}: ${task.conversation.length}`,
+          `${t("feishu.labels.pendingApprovals")}: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
         ].join("\n"),
       ),
       divider(),
       markdown(
         [
-          "**Run Settings**",
-          `model: ${currentModelLabel}`,
-          `reasoning: ${currentEffortLabel}`,
-          `plan mode: ${task.executionProfile.planMode ? "on" : "off"}`,
+          `**${t("feishu.sections.runSettings")}**`,
+          `${t("feishu.labels.model")}: ${currentModelLabel}`,
+          `${t("feishu.labels.reasoning")}: ${currentEffortLabel}`,
+          `${t("feishu.labels.planMode")}: ${task.executionProfile.planMode ? t("feishu.values.on") : t("feishu.values.off")}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       divider(),
       action([
         selectStatic({
-          placeholder: `Model: ${currentModelLabel}`,
+          placeholder: `${titleCaseLabel(t("feishu.labels.model"))}: ${currentModelLabel}`,
           initialOption: selectedModel,
           options: modelOptions,
           value: baseActionValue("task.select.model", binding, {
@@ -696,7 +740,7 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           }),
         }),
         selectStatic({
-          placeholder: `Reasoning: ${currentEffortLabel}`,
+          placeholder: `${titleCaseLabel(t("feishu.labels.reasoning"))}: ${currentEffortLabel}`,
           initialOption: selectedEffort,
           options: effortOptions,
           value: baseActionValue("task.select.effort", binding, {
@@ -707,7 +751,7 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       ]),
       action([
         button({
-          text: `Plan Mode: ${task.executionProfile.planMode ? "On" : "Off"}`,
+          text: task.executionProfile.planMode ? t("feishu.draft.planMode.on") : t("feishu.draft.planMode.off"),
           type: task.executionProfile.planMode ? "primary" : "default",
           value: baseActionValue("task.toggle.plan-mode", binding, {
             taskId: task.taskId,
@@ -715,18 +759,18 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           }),
         }),
       ]),
-      ...buildApprovalActionRows(task, binding, revision),
+      ...buildApprovalActionRows(task, binding, revision, locale),
       divider(),
       action([
         button({
-          text: "View Status",
+          text: t("feishu.taskControl.viewStatus"),
           value: baseActionValue("task.status", binding, {
             taskId: task.taskId,
             revision,
           }),
         }),
         button({
-          text: "Stop Turn",
+          text: t("feishu.taskControl.stopTurn"),
           type: "danger",
           value: baseActionValue("task.interrupt", binding, {
             taskId: task.taskId,
@@ -734,7 +778,7 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
           }),
         }),
         button({
-          text: "Retry Last Turn",
+          text: t("feishu.taskControl.retryLastTurn"),
           type: "primary",
           value: baseActionValue("task.retry", binding, {
             taskId: task.taskId,
@@ -745,21 +789,21 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       divider(),
       action([
         button({
-          text: "Rename Task",
+          text: t("feishu.taskControl.renameTask"),
           value: baseActionValue("task.rename.open", binding, {
             taskId: task.taskId,
             revision,
           }),
         }),
         button({
-          text: "Unbind Thread",
+          text: t("feishu.taskControl.unbindThread"),
           value: baseActionValue("task.unbind", binding, {
             taskId: task.taskId,
             revision,
           }),
         }),
         button({
-          text: "Archive Task",
+          text: t("feishu.taskControl.archiveTask"),
           type: "danger",
           value: baseActionValue("task.archive", binding, {
             taskId: task.taskId,
@@ -770,13 +814,13 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
       divider(),
       action([
         overflow({
-          text: "More",
+          text: t("feishu.taskControl.more"),
           options: [
-            { label: "Current Task", value: "task" },
-            { label: "All Tasks", value: "tasks" },
-            { label: "Bridge Health", value: "health" },
-            { label: "Account", value: "account" },
-            { label: "Rate Limits", value: "limits" },
+            { label: t("feishu.taskControl.more.currentTask"), value: "task" },
+            { label: t("feishu.taskControl.more.allTasks"), value: "tasks" },
+            { label: t("feishu.taskControl.more.health"), value: "health" },
+            { label: t("feishu.taskControl.more.account"), value: "account" },
+            { label: t("feishu.taskControl.more.limits"), value: "limits" },
           ],
           value: baseActionValue("task.inspect.global", binding, {
             taskId: task.taskId,
@@ -788,7 +832,12 @@ export function createTaskControlCard(data: FeishuTaskControlCardData): FeishuIn
   };
 }
 
-export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInteractiveCard {
+export function createTaskRenameCard(
+  data: FeishuTaskRenameCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
   const { task, binding, revision } = data;
 
@@ -798,30 +847,30 @@ export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInte
       update_multi: true,
     },
     header: {
-      title: plainText(`Rename Task: ${task.title}`),
+      title: plainText(t("feishu.rename.title", { title: task.title })),
       template: "blue",
     },
     elements: [
-      markdown("Renames the shared bridge task in both VSCode and Feishu."),
+      markdown(t("feishu.rename.intro")),
       divider(),
       markdown(
         [
-          "**Current Title**",
+          `**${t("feishu.sections.currentTitle")}**`,
           task.title,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       divider(),
       form([
         inputField({
           name: "task_title_input",
-          label: "New title",
-          placeholder: "Enter the new task title",
+          label: t("feishu.sections.newTitle"),
+          placeholder: t("feishu.rename.placeholder"),
           defaultValue: task.title,
         }),
         action([
           formSubmitButton({
-            text: "Apply New Title",
+            text: t("feishu.rename.apply"),
             type: "primary",
             value: baseActionValue("task.rename.submit", binding, {
               taskId: task.taskId,
@@ -834,7 +883,12 @@ export function createTaskRenameCard(data: FeishuTaskRenameCardData): FeishuInte
   };
 }
 
-export function createTaskActivityCard(data: FeishuTaskActivityCardData): FeishuInteractiveCard {
+export function createTaskActivityCard(
+  data: FeishuTaskActivityCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
   const {
     task,
@@ -847,7 +901,7 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
     canWithdrawMessage,
     canForceTurn,
   } = data;
-  const activityState = formatTaskActivityState(task, runtimeConnected, runtimeInitialized);
+  const activityState = formatTaskActivityState(task, runtimeConnected, runtimeInitialized, locale);
 
   return {
     config: {
@@ -855,14 +909,14 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       update_multi: true,
     },
     header: {
-      title: plainText(`Task Activity: ${task.title}`),
+      title: plainText(t("feishu.activity.title", { title: task.title })),
       template: activityState.template,
     },
     elements: [
       markdown(
         [
-          "**Receipt**",
-          `receipt: ${formatTaskActivityReceiptState(receiptState)}`,
+          `**${t("feishu.sections.receipt")}**`,
+          `${t("feishu.sections.receipt").toLowerCase()}: ${formatTaskActivityReceiptState(receiptState, locale)}`,
           queuedMessageId ? `queued message id: ${queuedMessageId}` : undefined,
         ]
           .filter(Boolean)
@@ -871,14 +925,14 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
       divider(),
       markdown(
         [
-          "**Status**",
-          `state: ${activityState.label}`,
-          `detail: ${activityState.detail}`,
-          `task status: ${task.status}`,
-          `queued next-turn messages: ${task.queuedMessageCount}`,
+          `**${t("feishu.sections.status")}**`,
+          `${t("feishu.labels.state")}: ${activityState.label}`,
+          `${t("feishu.labels.detail")}: ${activityState.detail}`,
+          `${t("feishu.labels.status")}: ${task.status}`,
+          `${t("feishu.labels.queuedNextTurnMessages")}: ${task.queuedMessageCount}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       ...(canWithdrawMessage || canForceTurn
         ? [
             divider(),
@@ -886,7 +940,7 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
               [
                 canWithdrawMessage
                   ? button({
-                      text: "Withdraw This Message",
+                      text: t("feishu.activity.withdraw"),
                       type: "danger",
                       value: baseActionValue("task.withdraw-queued-message", binding, {
                         taskId: task.taskId,
@@ -899,8 +953,8 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
                   ? button({
                       text:
                         task.activeTurnId
-                          ? "Interrupt + Run This Message Now"
-                          : "Run This Message Now",
+                          ? t("feishu.activity.interruptRunNow")
+                          : t("feishu.activity.runNow"),
                       type: "primary",
                       value: baseActionValue("task.force-turn", binding, {
                         taskId: task.taskId,
@@ -917,7 +971,12 @@ export function createTaskActivityCard(data: FeishuTaskActivityCardData): Feishu
   };
 }
 
-export function createTaskStatusSnapshotCard(data: FeishuTaskStatusSnapshotCardData): FeishuInteractiveCard {
+export function createTaskStatusSnapshotCard(
+  data: FeishuTaskStatusSnapshotCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
   const { task } = data;
 
@@ -927,31 +986,36 @@ export function createTaskStatusSnapshotCard(data: FeishuTaskStatusSnapshotCardD
       update_multi: true,
     },
     header: {
-      title: plainText(`Task Status Snapshot: ${task.title}`),
+      title: plainText(t("feishu.statusSnapshot.title", { title: task.title })),
       template: task.status === "failed" ? "red" : task.status === "awaiting-approval" ? "yellow" : "green",
     },
     elements: [
       markdown(
         [
-          "**Current Task**",
-          `taskId: ${task.taskId}`,
-          `status: ${task.status}`,
-          ...formatExecutionProfile(task.executionProfile),
-          `busy Feishu replies: ${formatFeishuRunningMessageMode(task.feishuRunningMessageMode)}`,
-          `queued next-turn messages: ${task.queuedMessageCount}`,
-          `attachments: ${task.assets.length}`,
-          `messages: ${task.conversation.length}`,
-          `pending approvals: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
+          `**${t("feishu.sections.currentTask")}**`,
+          `${t("feishu.labels.taskId")}: ${task.taskId}`,
+          `${t("feishu.labels.status")}: ${task.status}`,
+          ...formatExecutionProfile(task.executionProfile, locale),
+          `${t("feishu.labels.busyFeishuReplies")}: ${formatFeishuRunningMessageMode(task.feishuRunningMessageMode, locale)}`,
+          `${t("feishu.labels.queuedNextTurnMessages")}: ${task.queuedMessageCount}`,
+          `${t("feishu.labels.attachments")}: ${task.assets.length}`,
+          `${t("feishu.labels.messages")}: ${task.conversation.length}`,
+          `${t("feishu.labels.pendingApprovals")}: ${task.pendingApprovals.filter((approval) => approval.state === "pending").length}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Details**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.details")}**\n${note}`)] : []),
       divider(),
-      markdown("Use the main task card for retry, interrupt, approvals, unbind, and archive."),
+      markdown(t("feishu.statusSnapshot.footer")),
     ],
   };
 }
 
-export function createTaskInspectionSnapshotCard(data: FeishuTaskInspectionSnapshotCardData): FeishuInteractiveCard {
+export function createTaskInspectionSnapshotCard(
+  data: FeishuTaskInspectionSnapshotCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
   const { task, queryLabel } = data;
 
@@ -961,26 +1025,31 @@ export function createTaskInspectionSnapshotCard(data: FeishuTaskInspectionSnaps
       update_multi: true,
     },
     header: {
-      title: plainText(`${queryLabel} Snapshot: ${task.title}`),
+      title: plainText(t("feishu.inspection.title", { queryLabel, title: task.title })),
       template: "blue",
     },
     elements: [
       markdown(
         [
-          "**Snapshot Query**",
-          `query: ${queryLabel}`,
-          `taskId: ${task.taskId}`,
-          `status: ${task.status}`,
+          `**${t("feishu.sections.snapshotQuery")}**`,
+          `${t("feishu.labels.query")}: ${queryLabel}`,
+          `${t("feishu.labels.taskId")}: ${task.taskId}`,
+          `${t("feishu.labels.status")}: ${task.status}`,
         ].join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Details**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.details")}**\n${note}`)] : []),
       divider(),
-      markdown("Read-only snapshot. Use the main task card for controls."),
+      markdown(t("feishu.inspection.footer")),
     ],
   };
 }
 
-export function createArchivedThreadCard(data: FeishuArchivedThreadCardData): FeishuInteractiveCard {
+export function createArchivedThreadCard(
+  data: FeishuArchivedThreadCardData,
+  options: FeishuCardRenderOptions = {},
+): FeishuInteractiveCard {
+  const locale = options.locale ?? "en-US";
+  const t = createFeishuTranslator(locale);
   const note = truncateNote(data.note);
 
   return {
@@ -989,25 +1058,25 @@ export function createArchivedThreadCard(data: FeishuArchivedThreadCardData): Fe
       update_multi: true,
     },
     header: {
-      title: plainText("Archived Codex Topic"),
+      title: plainText(t("feishu.archived.title")),
       template: "grey",
     },
     elements: [
-      markdown("This Feishu topic is archived. New messages here no longer reach the workstation."),
+      markdown(t("feishu.archived.intro")),
       divider(),
       markdown(
         [
-          "**Archived Task**",
-          `taskId: ${data.taskId ?? "unknown"}`,
-          `title: ${data.taskTitle ?? "unknown"}`,
+          `**${t("feishu.sections.archivedTask")}**`,
+          `${t("feishu.labels.taskId")}: ${data.taskId ?? t("feishu.values.unknown")}`,
+          `${t("feishu.labels.title")}: ${data.taskTitle ?? t("feishu.values.unknown")}`,
           data.archivedAt ? `archivedAt: ${data.archivedAt}` : undefined,
         ]
           .filter(Boolean)
           .join("\n"),
       ),
-      ...(note ? [divider(), markdown(`**Update**\n${note}`)] : []),
+      ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       divider(),
-      markdown("Start a new Feishu topic when you want to launch or bind another task."),
+      markdown(t("feishu.archived.footer")),
     ],
   };
 }

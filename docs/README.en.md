@@ -82,6 +82,7 @@ If your current shell already exports these Feishu variables, the script also pe
 - `FEISHU_APP_SECRET`
 - `FEISHU_DEFAULT_CHAT_ID`
 - `FEISHU_DEFAULT_CHAT_NAME`
+- `FEISHU_UI_LANGUAGE`
 
 ### 2. Host-native startup: `start:host`
 
@@ -118,18 +119,20 @@ This path also auto-fills `docker/.env` and switches the runtime-specific fields
 
 ### 4. If needed, only fill the Feishu fields
 
-Edit `docker/.env` and usually just confirm:
+Edit `docker/.env` and usually just confirm these fields. Add `FEISHU_UI_LANGUAGE=zh-CN` if you want Chinese Feishu UI text:
 
 ```env
 FEISHU_APP_ID=your App ID
 FEISHU_APP_SECRET=your App Secret
 FEISHU_DEFAULT_CHAT_NAME=your Feishu group name
+FEISHU_UI_LANGUAGE=zh-CN
 ```
 
 If you already know the chat id, you can use `FEISHU_DEFAULT_CHAT_ID=oc_xxx` instead.
 
 `FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` only decide which group bridge uses when it proactively creates a new Feishu topic, for example from `Bind to New Feishu Topic` in the VSCode monitor.
 They do not restrict inbound private chats, and they do not prevent manually started threads in other bot-enabled groups from reaching bridge. Incoming routing still follows the real `chat_id` in each Feishu event.
+`FEISHU_UI_LANGUAGE` is a global switch. It currently supports `en-US` (default) and `zh-CN`.
 
 ### 5. Confirm the Feishu prerequisites
 

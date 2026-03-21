@@ -57,6 +57,7 @@
 - 一个工作群作为入口
 - 每个 bridge task 绑定一个 Feishu 线程或回复链
 - `FEISHU_DEFAULT_CHAT_ID` / `FEISHU_DEFAULT_CHAT_NAME` 只决定 bridge 主动新建飞书话题时默认落到哪个群，例如 VSCode monitor 的 `Bind to New Feishu Topic`；入站消息路由仍以事件里的真实 `chat_id` 为准
+- `FEISHU_UI_LANGUAGE` 是 Feishu 端的全局交互语言开关；一期支持 `en-US` 与 `zh-CN`，默认 `en-US`
 - 负责移动端对话、审批和控制命令
 - 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
 - Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex

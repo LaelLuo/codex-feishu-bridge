@@ -370,6 +370,46 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
     }
   });
 
+  it("renders the first draft card in Chinese when FEISHU_UI_LANGUAGE=zh-CN", async () => {
+    const harness = await createHarness({
+      FEISHU_UI_LANGUAGE: "zh-CN",
+    });
+
+    try {
+      await harness.onMessage(
+        {
+          message_id: "om_plain_zh",
+          thread_id: "omt_new_task_zh",
+          root_id: "om_root_new_task_zh",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "请帮我看一下 bridge 状态" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_plain_zh",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "创建 Codex 任务")),
+        "zh-CN draft card reply",
+      );
+
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "在主机上开始")),
+        true,
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "恢复默认配置")),
+        true,
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("updates the draft card through long-connection card actions and falls back to the model default effort", async () => {
     const harness = await createHarness();
 

@@ -48,6 +48,7 @@ describe("shared config helpers", () => {
         FEISHU_ENCRYPT_KEY: "encrypt-key",
         FEISHU_DEFAULT_CHAT_ID: "oc_xxx",
         FEISHU_DEFAULT_CHAT_NAME: "Bridge Test Group",
+        FEISHU_UI_LANGUAGE: "zh-CN",
       },
       "/workspace/codex-feishu-bridge",
     );
@@ -59,6 +60,27 @@ describe("shared config helpers", () => {
     assert.equal(config.feishuEncryptKey, "encrypt-key");
     assert.equal(config.feishuDefaultChatId, "oc_xxx");
     assert.equal(config.feishuDefaultChatName, "Bridge Test Group");
+    assert.equal(config.feishuUiLanguage, "zh-CN");
+  });
+
+  it("falls back to en-US when the feishu UI language is missing or unsupported", () => {
+    const defaultConfig = loadBridgeConfig(
+      {
+        WORKSPACE_PATH: "/workspace/codex-feishu-bridge",
+      },
+      "/workspace/codex-feishu-bridge",
+    );
+
+    const invalidConfig = loadBridgeConfig(
+      {
+        WORKSPACE_PATH: "/workspace/codex-feishu-bridge",
+        FEISHU_UI_LANGUAGE: "ja-JP",
+      },
+      "/workspace/codex-feishu-bridge",
+    );
+
+    assert.equal(defaultConfig.feishuUiLanguage, "en-US");
+    assert.equal(invalidConfig.feishuUiLanguage, "en-US");
   });
 
   it("loads tcp proxy runtime settings when present", () => {

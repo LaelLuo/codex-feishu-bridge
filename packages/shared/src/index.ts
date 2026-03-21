@@ -2,6 +2,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type CodexBackendMode = "mock" | "stdio" | "socket-proxy" | "tcp-proxy";
+export type FeishuUiLanguage = "en-US" | "zh-CN";
 
 export interface Logger {
   info(message: string, metadata?: unknown): void;
@@ -35,6 +36,11 @@ export interface BridgeConfig {
   feishuEncryptKey?: string;
   feishuDefaultChatId?: string;
   feishuDefaultChatName?: string;
+  feishuUiLanguage: FeishuUiLanguage;
+}
+
+function parseFeishuUiLanguage(value: string | undefined): FeishuUiLanguage {
+  return value === "zh-CN" ? "zh-CN" : "en-US";
 }
 
 export function createConsoleLogger(prefix = "bridge"): Logger {
@@ -131,6 +137,7 @@ export function loadBridgeConfig(
     feishuEncryptKey: env.FEISHU_ENCRYPT_KEY,
     feishuDefaultChatId: env.FEISHU_DEFAULT_CHAT_ID,
     feishuDefaultChatName: env.FEISHU_DEFAULT_CHAT_NAME,
+    feishuUiLanguage: parseFeishuUiLanguage(env.FEISHU_UI_LANGUAGE),
   };
 }
 

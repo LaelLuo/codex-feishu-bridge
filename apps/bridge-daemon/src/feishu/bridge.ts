@@ -27,6 +27,7 @@ import {
   type FeishuInteractiveCard,
   type FeishuModelOption,
 } from "./cards";
+import { createFeishuTranslator, type FeishuTranslator } from "../i18n";
 
 interface FeishuApiResponse<T> {
   code: number;
@@ -365,40 +366,55 @@ function fileNameFromContentDisposition(header: string | null): string | undefin
   return plainMatch?.[1]?.trim();
 }
 
-function formatTaskSummary(task: BridgeTask): string {
+function formatTaskSummary(task: BridgeTask, locale: BridgeConfig["feishuUiLanguage"]): string {
+  const t = createFeishuTranslator(locale);
   return [
-    `taskId: ${task.taskId}`,
-    `title: ${task.title}`,
-    `status: ${task.status}`,
-    `mode: ${task.mode}`,
-    `workspace: ${task.workspaceRoot}`,
-    `pendingApprovals: ${task.pendingApprovals.length}`,
-    `diffs: ${task.diffs.length}`,
-    `attachments: ${task.assets.length}`,
-    `messages: ${task.conversation.length}`,
-    `desktopReplySyncToFeishu: ${task.desktopReplySyncToFeishu}`,
-    `feishuRunningMessageMode: ${task.feishuRunningMessageMode}`,
-    `queuedMessageCount: ${task.queuedMessageCount}`,
+    `${t("feishu.labels.taskId")}: ${task.taskId}`,
+    `${t("feishu.labels.title")}: ${task.title}`,
+    `${t("feishu.labels.status")}: ${task.status}`,
+    `${t("feishu.labels.mode")}: ${task.mode}`,
+    `${t("feishu.labels.workspace")}: ${task.workspaceRoot}`,
+    `${t("feishu.labels.pendingApprovals")}: ${task.pendingApprovals.length}`,
+    `${t("feishu.labels.diffs")}: ${task.diffs.length}`,
+    `${t("feishu.labels.attachments")}: ${task.assets.length}`,
+    `${t("feishu.labels.messages")}: ${task.conversation.length}`,
+    `${t("feishu.labels.desktopReplySyncToFeishu")}: ${task.desktopReplySyncToFeishu}`,
+    `${t("feishu.labels.feishuRunningMessageMode")}: ${task.feishuRunningMessageMode}`,
+    `${t("feishu.labels.queuedNextTurnMessages")}: ${task.queuedMessageCount}`,
     ...formatExecutionProfile(task.executionProfile),
-    task.feishuBinding ? `threadKey: ${task.feishuBinding.threadKey}` : "threadKey: unbound",
+    task.feishuBinding
+      ? `${t("feishu.labels.threadKey")}: ${task.feishuBinding.threadKey}`
+      : `${t("feishu.labels.threadKey")}: ${t("feishu.values.unbound")}`,
   ].join("\n");
 }
 
-function queuedMessageNotice(task: BridgeTask, sourceLabel: string): string {
+function queuedMessageNotice(task: BridgeTask, sourceLabel: string, t: FeishuTranslator): string {
   if (task.queuedMessageCount <= 1) {
-    return `Queued the latest ${sourceLabel} message for the next turn.`;
+    return t("feishu.bridge.queuedLatestMessage.single", { sourceLabel });
   }
 
-  return `Queued the latest ${sourceLabel} message. ${task.queuedMessageCount} Feishu messages are now waiting.`;
+  return t("feishu.bridge.queuedLatestMessage.multi", {
+    sourceLabel,
+    count: task.queuedMessageCount,
+  });
 }
 
-function queuedAttachmentNotice(task: BridgeTask, actorId: string, kind: "image" | "file"): string {
-  const attachmentLabel = kind === "image" ? "photo" : "file";
+function queuedAttachmentNotice(
+  task: BridgeTask,
+  actorId: string,
+  kind: "image" | "file",
+  t: FeishuTranslator,
+): string {
+  const attachmentLabel = kind === "image" ? t("feishu.values.photo") : t("feishu.values.file");
   if (task.queuedMessageCount <= 1) {
-    return `Queued the ${attachmentLabel} from ${actorId} for the next turn.`;
+    return t("feishu.bridge.queuedAttachment.single", { actorId, attachmentLabel });
   }
 
-  return `Queued the ${attachmentLabel} from ${actorId}. ${task.queuedMessageCount} Feishu messages are now waiting.`;
+  return t("feishu.bridge.queuedAttachment.multi", {
+    actorId,
+    attachmentLabel,
+    count: task.queuedMessageCount,
+  });
 }
 
 function readCardFormString(
@@ -594,22 +610,26 @@ function formatModelsList(
   ].join("\n");
 }
 
-function formatApprovalResolved(task: BridgeTask, payload: { approval?: BridgeTask["pendingApprovals"][number]; requestId?: string }): string {
+function formatApprovalResolved(
+  task: BridgeTask,
+  payload: { approval?: BridgeTask["pendingApprovals"][number]; requestId?: string },
+  t: FeishuTranslator,
+): string {
   if (payload.approval) {
-    return [
-      `Approval resolved for ${task.title}`,
-      `requestId: ${payload.approval.requestId}`,
-      `state: ${payload.approval.state}`,
-    ].join("\n");
+    return t("feishu.bridge.approvalResolved.withState", {
+      title: task.title,
+      requestId: payload.approval.requestId,
+      state: payload.approval.state,
+    });
   }
 
-  return [
-    `Approval resolved for ${task.title}`,
-    `requestId: ${payload.requestId ?? "unknown"}`,
-  ].join("\n");
+  return t("feishu.bridge.approvalResolved.withoutState", {
+    title: task.title,
+    requestId: payload.requestId ?? t("feishu.values.unknown"),
+  });
 }
 
-function formatTaskFailure(task: BridgeTask, payload: unknown): string {
+function formatTaskFailure(task: BridgeTask, payload: unknown, t: FeishuTranslator): string {
   const turnError =
     payload &&
     typeof payload === "object" &&
@@ -623,23 +643,24 @@ function formatTaskFailure(task: BridgeTask, payload: unknown): string {
       ? String((payload.turn.error as { message?: unknown }).message ?? "")
       : undefined;
 
+  return t("feishu.bridge.taskFailed", {
+    title: task.title,
+    message: turnError || task.latestSummary || "Unknown task failure.",
+  });
+}
+
+function formatArchivedThreadNotice(taskId: string | undefined, t: FeishuTranslator): string {
+  const taskSuffix = taskId ? ` (${taskId})` : "";
   return [
-    `Task failed: ${task.title}`,
-    turnError || task.latestSummary || "Unknown task failure.",
+    t("feishu.bridge.archivedThreadNotice.line1", { taskSuffix }),
+    t("feishu.bridge.archivedThreadNotice.line2"),
   ].join("\n");
 }
 
-function formatArchivedThreadNotice(taskId?: string): string {
-  return [
-    `This Feishu topic is archived${taskId ? ` from task ${taskId}` : ""}.`,
-    "Start a new topic with the bot if you want to launch or bind more work.",
-  ].join("\n");
-}
-
-function formatCreatedTaskNotice(taskId: string, initialMessageQueued: boolean): string {
+function formatCreatedTaskNotice(taskId: string, initialMessageQueued: boolean, t: FeishuTranslator): string {
   return initialMessageQueued
-    ? `Created task ${taskId}. Initial message queued.`
-    : `Created task ${taskId}. Send the first plain-text message in this thread to start the first turn.`;
+    ? t("feishu.bridge.createdTask.withInitialMessage", { taskId })
+    : t("feishu.bridge.createdTask.awaitingFirstMessage", { taskId });
 }
 
 function truncateReplyText(text: string): string {
@@ -717,6 +738,7 @@ export class FeishuBridge {
   private readonly longConnectionFactory?: LongConnectionFactory;
   private readonly deliveredAgentMessageIds = new Set<string>();
   private readonly deliveredApprovalResolutionKeys = new Set<string>();
+  private readonly t: FeishuTranslator;
 
   constructor(
     private readonly options: {
@@ -728,6 +750,7 @@ export class FeishuBridge {
   ) {
     this.stateFile = path.join(options.config.stateDir, "feishu-events.json");
     this.longConnectionFactory = options.longConnectionFactory;
+    this.t = createFeishuTranslator(options.config.feishuUiLanguage);
   }
 
   get enabled(): boolean {
@@ -892,10 +915,10 @@ export class FeishuBridge {
     const rootMessageId = await this.sendChatMessage(
       defaultChatId,
       [
-        "Codex task linked from VSCode monitor",
+        this.t("feishu.bridge.linkedFromVsCodeMonitor"),
         `Task: ${task.title.replace(/\s+/g, " ").trim()}`,
         `Task ID: ${task.taskId}`,
-        "Reply in this thread to continue from Feishu.",
+        this.t("feishu.bridge.replyContinueInThread"),
       ].join("\n"),
     );
     const binding: FeishuThreadBinding = {
@@ -910,7 +933,7 @@ export class FeishuBridge {
       task: this.options.service.getTask(task.taskId) ?? boundTask,
       binding,
       replyTargetId: rootMessageId,
-      note: "Bound from the VSCode monitor.",
+      note: this.t("feishu.bridge.boundFromVsCodeMonitor"),
     });
     return this.options.service.getTask(task.taskId) ?? boundTask;
   }
@@ -984,14 +1007,16 @@ export class FeishuBridge {
         if (!payload.titleRenamed) {
           if (payload.queuedMessageStartFailed) {
             await syncReceiptActivityCard(payload.receiptId, {
-              note: `Failed to start this queued Feishu message: ${payload.queuedMessageError ?? "unknown error"}.`,
+              note: this.t("feishu.bridge.queuedMessageStartFailed", {
+                error: payload.queuedMessageError ?? this.t("feishu.values.unknown"),
+              }),
               receiptState: "failed",
             });
             return;
           }
           if (payload.queuedMessageWithdrawn) {
             await syncReceiptActivityCard(payload.receiptId, {
-              note: "This queued Feishu message was withdrawn before it started.",
+              note: this.t("feishu.bridge.queuedMessageWithdrawnBeforeStart"),
               receiptState: "withdrawn",
             });
             await this.renderTaskControlCard({
@@ -1008,10 +1033,8 @@ export class FeishuBridge {
           binding: task.feishuBinding,
           note:
             payload.renamedBy === "vscode"
-              ? `Task renamed in VSCode to ${payload.nextTitle ?? task.title}.`
-              : payload.renamedBy === "feishu"
-                ? `Task renamed to ${payload.nextTitle ?? task.title}.`
-                : `Task renamed to ${payload.nextTitle ?? task.title}.`,
+              ? this.t("feishu.bridge.taskRenamedInVsCodeTo", { title: payload.nextTitle ?? task.title })
+              : this.t("feishu.bridge.taskRenamedTo", { title: payload.nextTitle ?? task.title }),
         });
         await syncActivityCards();
         return;
@@ -1020,7 +1043,7 @@ export class FeishuBridge {
         await syncReceiptActivityCard(
           event.payload && typeof event.payload === "object" ? (event.payload as { receiptId?: string }).receiptId : undefined,
           {
-            note: queuedMessageNotice(task, "Feishu"),
+            note: queuedMessageNotice(task, this.t("feishu.values.feishuSource"), this.t),
             receiptState: "queued",
           },
         );
@@ -1035,8 +1058,8 @@ export class FeishuBridge {
           {
             note:
               task.status === "running"
-                ? "This Feishu message is now running and Codex is thinking."
-                : "This Feishu message started a turn.",
+                ? this.t("feishu.bridge.taskMessageRunning")
+                : this.t("feishu.bridge.taskMessageStarted"),
             receiptState: "started",
           },
         );
@@ -1049,7 +1072,7 @@ export class FeishuBridge {
         await syncReceiptActivityCard(
           event.payload && typeof event.payload === "object" ? (event.payload as { receiptId?: string }).receiptId : undefined,
           {
-            note: "This Feishu message was sent into the current running turn.",
+            note: this.t("feishu.bridge.taskMessageSteered"),
             receiptState: "steered",
           },
         );
@@ -1067,7 +1090,10 @@ export class FeishuBridge {
         await this.renderTaskControlCard({
           task,
           binding: task.feishuBinding,
-          note: `Approval requested: ${approval.kind} - ${approval.reason}`,
+          note: this.t("feishu.bridge.approvalRequested", {
+            kind: approval.kind,
+            reason: approval.reason,
+          }),
           forceReply: true,
         });
         await syncActivityCards();
@@ -1099,28 +1125,31 @@ export class FeishuBridge {
         }
         await this.replyToMessage(
           task.feishuBinding.rootMessageId ?? task.feishuBinding.threadKey,
-          formatApprovalResolved(task, approvalPayload),
+          formatApprovalResolved(task, approvalPayload, this.t),
         );
         await syncActivityCards();
         await this.renderTaskControlCard({
           task,
           binding: task.feishuBinding,
-          note: `Approval ${requestId ?? "unknown"} resolved as ${resolutionState}.`,
+          note: this.t("feishu.bridge.approvalResolvedAs", {
+            requestId: requestId ?? this.t("feishu.values.unknown"),
+            decision: resolutionState,
+          }),
         });
         return;
       }
       case "task.failed":
         await syncActivityCards({
-          note: formatTaskFailure(task, event.payload),
+          note: formatTaskFailure(task, event.payload, this.t),
         });
         await this.replyToMessage(
           task.feishuBinding.rootMessageId ?? task.feishuBinding.threadKey,
-          formatTaskFailure(task, event.payload),
+          formatTaskFailure(task, event.payload, this.t),
         );
         await this.renderTaskControlCard({
           task,
           binding: task.feishuBinding,
-          note: formatTaskFailure(task, event.payload),
+          note: formatTaskFailure(task, event.payload, this.t),
         });
         return;
       case "task.completed":
@@ -1251,7 +1280,7 @@ export class FeishuBridge {
     }
 
     if (!task && archivedThread) {
-      await this.replyToMessage(replyTargetId, formatArchivedThreadNotice(archivedThread.taskId));
+      await this.replyToMessage(replyTargetId, formatArchivedThreadNotice(archivedThread.taskId, this.t));
       return;
     }
 
@@ -1284,7 +1313,7 @@ export class FeishuBridge {
       if (currentBinding) {
         const draft = this.getThreadDraft(currentBinding) ?? createDefaultDraft(currentBinding);
         draft.prompt = text || draft.prompt;
-        draft.note = "Draft updated from the latest plain-text message.";
+        draft.note = this.t("feishu.bridge.draftUpdatedFromLatestMessage");
         draft.cardRevision += 1;
         await this.saveThreadDraft(draft);
         await this.renderDraftCard({
@@ -1329,10 +1358,10 @@ export class FeishuBridge {
               : "started";
         const note =
           receiptState === "queued"
-            ? queuedMessageNotice(updatedTask, "Feishu")
+            ? queuedMessageNotice(updatedTask, this.t("feishu.values.feishuSource"), this.t)
             : receiptState === "steered"
-              ? "This Feishu message was sent into the current running turn."
-              : "This Feishu message started a turn immediately.";
+              ? this.t("feishu.bridge.taskMessageSteered")
+              : this.t("feishu.bridge.taskMessageStarted");
         await this.replyTaskActivityCard({
           task: refreshedTask,
           binding: task.feishuBinding,
@@ -1356,7 +1385,9 @@ export class FeishuBridge {
           replyTargetId,
           receiptId: message.message_id ?? randomUUID(),
           receiptState: "failed",
-          note: `Failed to send the latest Feishu message: ${error instanceof Error ? error.message : String(error)}.`,
+          note: this.t("feishu.bridge.queuedMessageStartFailed", {
+            error: error instanceof Error ? error.message : String(error),
+          }),
         });
       }
     }
@@ -1372,13 +1403,13 @@ export class FeishuBridge {
   }): Promise<void> {
     const { message, task, currentBinding, archivedThread, replyTargetId, actorId } = params;
     if (!task && archivedThread) {
-      await this.replyToMessage(replyTargetId, formatArchivedThreadNotice(archivedThread.taskId));
+      await this.replyToMessage(replyTargetId, formatArchivedThreadNotice(archivedThread.taskId, this.t));
       return;
     }
 
     const attachment = await this.downloadIncomingAttachment(message);
     if (!attachment) {
-      await this.replyToMessage(replyTargetId, "This attachment type is not supported yet.");
+      await this.replyToMessage(replyTargetId, this.t("feishu.bridge.attachmentTypeUnsupported"));
       return;
     }
 
@@ -1394,7 +1425,11 @@ export class FeishuBridge {
       const draft = this.getThreadDraft(currentBinding) ?? createDefaultDraft(currentBinding);
       const storedAttachment = await this.saveDraftAttachment(currentBinding, attachment);
       draft.attachments = [...draft.attachments, storedAttachment];
-      draft.note = `Queued ${storedAttachment.kind === "image" ? "photo" : "file"} attachment ${storedAttachment.fileName}.`;
+      draft.note = this.t("feishu.bridge.draftAttachmentQueued", {
+        attachmentLabel:
+          storedAttachment.kind === "image" ? this.t("feishu.values.photo") : this.t("feishu.values.file"),
+        fileName: storedAttachment.fileName,
+      });
       draft.cardRevision += 1;
       await this.saveThreadDraft(draft);
       await this.renderDraftCard({
@@ -1432,10 +1467,10 @@ export class FeishuBridge {
             : "started";
       const note =
         receiptState === "queued"
-          ? queuedAttachmentNotice(updatedTask, actorId, attachment.kind)
+          ? queuedAttachmentNotice(updatedTask, actorId, attachment.kind, this.t)
           : receiptState === "steered"
-            ? `This ${attachment.kind === "image" ? "photo" : "file"} was added to the current running turn.`
-            : `This ${attachment.kind === "image" ? "photo" : "file"} started a turn immediately.`;
+            ? this.t("feishu.bridge.taskMessageSteered")
+            : this.t("feishu.bridge.taskMessageStarted");
       await this.replyTaskActivityCard({
         task: refreshedTask,
         binding: task.feishuBinding,
@@ -1551,7 +1586,10 @@ export class FeishuBridge {
     }
 
     if (command === "card-test") {
-      await this.sendCardReply(replyTargetId, createCardTestCard());
+      await this.sendCardReply(
+        replyTargetId,
+        createCardTestCard(undefined, { locale: this.options.config.feishuUiLanguage }),
+      );
       return;
     }
 
@@ -1577,7 +1615,7 @@ export class FeishuBridge {
         return;
       }
 
-      await this.replyToMessage(replyTargetId, formatTaskSummary(targetTask));
+      await this.replyToMessage(replyTargetId, formatTaskSummary(targetTask, this.options.config.feishuUiLanguage));
       return;
     }
 
@@ -1670,7 +1708,7 @@ export class FeishuBridge {
         task: reboundTask,
         binding: currentBinding,
         replyTargetId,
-        note: `Bound this thread to ${reboundTask.taskId}.`,
+        note: this.t("feishu.bridge.threadBoundToTask", { taskId: reboundTask.taskId }),
       });
       await this.replyToMessage(
         replyTargetId,
@@ -1913,19 +1951,22 @@ export class FeishuBridge {
     draft: FeishuThreadDraft,
   note?: string,
   ): Promise<FeishuInteractiveCard> {
-    return createDraftCard({
-      prompt: draft.prompt,
-      model: draft.model,
-      effort: draft.effort,
-      planMode: draft.planMode,
-      sandbox: draft.sandbox,
-      approvalPolicy: draft.approvalPolicy,
-      attachmentSummary: formatDraftAttachmentsSummary(draft),
-      note,
-      binding,
-      revision: draft.cardRevision,
-      modelOptions: this.toModelOptions(await this.options.service.listModels()),
-    });
+    return createDraftCard(
+      {
+        prompt: draft.prompt,
+        model: draft.model,
+        effort: draft.effort,
+        planMode: draft.planMode,
+        sandbox: draft.sandbox,
+        approvalPolicy: draft.approvalPolicy,
+        attachmentSummary: formatDraftAttachmentsSummary(draft),
+        note,
+        binding,
+        revision: draft.cardRevision,
+        modelOptions: this.toModelOptions(await this.options.service.listModels()),
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
   }
 
   private async renderTaskControlCard(params: {
@@ -1973,28 +2014,31 @@ export class FeishuBridge {
     activityCard: Pick<FeishuTaskActivityCardState, "revision" | "note" | "receiptId" | "receiptState">,
   ): Promise<FeishuInteractiveCard> {
     const runtimeHealth = await this.options.service.readRuntimeHealth();
-    return createTaskActivityCard({
-      task,
-      binding,
-      revision: activityCard.revision,
-      note: activityCard.note,
-      runtimeConnected: runtimeHealth.connected,
-      runtimeInitialized: runtimeHealth.initialized,
-      receiptState: activityCard.receiptState,
-      queuedMessageId: activityCard.receiptId,
-      canWithdrawMessage: Boolean(
-        activityCard.receiptId &&
-          activityCard.receiptState === "queued" &&
-          this.options.service.hasQueuedMessage(task.taskId, activityCard.receiptId),
-      ),
-      canForceTurn: Boolean(
-        activityCard.receiptId &&
-          activityCard.receiptState === "queued" &&
-          this.options.service.hasQueuedMessage(task.taskId, activityCard.receiptId) &&
-          runtimeHealth.connected &&
-          runtimeHealth.initialized,
-      ),
-    });
+    return createTaskActivityCard(
+      {
+        task,
+        binding,
+        revision: activityCard.revision,
+        note: activityCard.note,
+        runtimeConnected: runtimeHealth.connected,
+        runtimeInitialized: runtimeHealth.initialized,
+        receiptState: activityCard.receiptState,
+        queuedMessageId: activityCard.receiptId,
+        canWithdrawMessage: Boolean(
+          activityCard.receiptId &&
+            activityCard.receiptState === "queued" &&
+            this.options.service.hasQueuedMessage(task.taskId, activityCard.receiptId),
+        ),
+        canForceTurn: Boolean(
+          activityCard.receiptId &&
+            activityCard.receiptState === "queued" &&
+            this.options.service.hasQueuedMessage(task.taskId, activityCard.receiptId) &&
+            runtimeHealth.connected &&
+            runtimeHealth.initialized,
+        ),
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
   }
 
   private async replyTaskActivityCard(params: {
@@ -2054,10 +2098,13 @@ export class FeishuBridge {
     replyTargetId?: string;
   }): Promise<void> {
     const { task, binding, note, replyTargetId } = params;
-    const card = createTaskStatusSnapshotCard({
-      task,
-      note,
-    });
+    const card = createTaskStatusSnapshotCard(
+      {
+        task,
+        note,
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
     const targetMessageId =
       replyTargetId ??
       binding.rootMessageId ??
@@ -2074,11 +2121,14 @@ export class FeishuBridge {
     replyTargetId?: string;
   }): Promise<void> {
     const { task, binding, queryLabel, note, replyTargetId } = params;
-    const card = createTaskInspectionSnapshotCard({
-      task,
-      queryLabel,
-      note,
-    });
+    const card = createTaskInspectionSnapshotCard(
+      {
+        task,
+        queryLabel,
+        note,
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
     const targetMessageId =
       replyTargetId ??
       binding.rootMessageId ??
@@ -2093,13 +2143,16 @@ export class FeishuBridge {
     revision: number,
     note?: string,
   ): Promise<FeishuInteractiveCard> {
-    return createTaskControlCard({
-      task,
-      binding,
-      note,
-      revision,
-      modelOptions: this.toModelOptions(await this.options.service.listModels()),
-    });
+    return createTaskControlCard(
+      {
+        task,
+        binding,
+        note,
+        revision,
+        modelOptions: this.toModelOptions(await this.options.service.listModels()),
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
   }
 
   private async replyTaskRenameCard(params: {
@@ -2111,12 +2164,15 @@ export class FeishuBridge {
     const { task, binding, note, replyTargetId } = params;
     const currentCard = this.getThreadTaskCard(binding);
     const revision = (currentCard?.revision ?? 0) + 1;
-    const card = createTaskRenameCard({
-      task,
-      binding,
-      revision,
-      note,
-    });
+    const card = createTaskRenameCard(
+      {
+        task,
+        binding,
+        revision,
+        note,
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
     const targetMessageId =
       replyTargetId ??
       binding.rootMessageId ??
@@ -2145,7 +2201,7 @@ export class FeishuBridge {
         binding,
         revision,
         note,
-      }),
+      }, { locale: this.options.config.feishuUiLanguage }),
     );
   }
 
@@ -2158,13 +2214,16 @@ export class FeishuBridge {
     note?: string;
   }): Promise<FeishuInteractiveCard> {
     const { binding, taskId, taskTitle, archivedAt, messageId, note } = params;
-    const card = createArchivedThreadCard({
-      binding,
-      taskId,
-      taskTitle,
-      archivedAt,
-      note,
-    });
+    const card = createArchivedThreadCard(
+      {
+        binding,
+        taskId,
+        taskTitle,
+        archivedAt,
+        note,
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
 
     const targetMessageId = messageId ?? this.getThreadTaskCard(binding)?.messageId ?? this.getThreadDraft(binding)?.cardMessageId;
     if (!targetMessageId) {
@@ -2268,7 +2327,7 @@ export class FeishuBridge {
           binding: currentBinding,
           draft,
           replyTargetId,
-          note: "Prompt updated from slash command.",
+          note: this.t("feishu.bridge.promptUpdatedFromSlash"),
         });
         return;
       }
@@ -2333,7 +2392,7 @@ export class FeishuBridge {
           binding: currentBinding,
           draft,
           replyTargetId,
-          note: "Reasoning effort updated from slash command.",
+          note: this.t("feishu.bridge.reasoningEffortUpdatedFromSlash"),
         });
         return;
       }
@@ -2351,7 +2410,9 @@ export class FeishuBridge {
           binding: currentBinding,
           draft,
           replyTargetId,
-          note: `Plan mode ${draft.planMode ? "enabled" : "disabled"} from slash command.`,
+          note: this.t("feishu.bridge.planModeUpdatedFromSlash", {
+            state: draft.planMode ? this.t("feishu.values.on") : this.t("feishu.values.off"),
+          }),
         });
         return;
       }
@@ -2372,7 +2433,7 @@ export class FeishuBridge {
           binding: currentBinding,
           draft,
           replyTargetId,
-          note: "Sandbox updated from slash command.",
+          note: this.t("feishu.bridge.sandboxUpdatedFromSlash"),
         });
         return;
       }
@@ -2393,7 +2454,7 @@ export class FeishuBridge {
           binding: currentBinding,
           draft,
           replyTargetId,
-          note: "Approval policy updated from slash command.",
+          note: this.t("feishu.bridge.approvalPolicyUpdatedFromSlash"),
         });
         return;
       }
@@ -2489,7 +2550,9 @@ export class FeishuBridge {
     };
 
     if (value.kind === "test.ping") {
-      return createCardTestCard(`Pong from long connection at ${new Date().toISOString()}.`);
+      return createCardTestCard(`Pong from long connection at ${new Date().toISOString()}.`, {
+        locale: this.options.config.feishuUiLanguage,
+      });
     }
 
     if (value.kind.startsWith("draft.")) {
@@ -2508,7 +2571,7 @@ export class FeishuBridge {
         return this.renderDraftCard({
           binding,
           draft: resetDraft,
-          note: "Draft cancelled. Send plain text in this thread to start a new draft.",
+          note: this.t("feishu.bridge.draftCancelledStartNewDraft"),
         });
       }
 
@@ -2524,72 +2587,82 @@ export class FeishuBridge {
           draft.planMode = false;
           draft.sandbox = DEFAULT_NEW_SANDBOX;
           draft.approvalPolicy = DEFAULT_NEW_APPROVAL_POLICY;
-          draft.note = "Reset to defaults.";
+          draft.note = this.t("feishu.bridge.resetToDefaults");
           break;
         case "draft.select.model": {
           const modelId = action?.option;
           if (!modelId) {
-            draft.note = "Model selection was empty.";
+            draft.note = this.t("feishu.bridge.modelSelectionEmpty");
             break;
           }
           const models = await this.options.service.listModels();
           const model = models.find((entry) => entry.id === modelId || entry.model === modelId);
           if (!model) {
-            draft.note = `Unknown model: ${modelId}`;
+            draft.note = this.t("feishu.bridge.unknownModel", { modelId });
             break;
           }
           draft.model = model.id;
-          draft.note = `Selected model ${model.id}.`;
+          draft.note = this.t("feishu.bridge.selectedModel", { modelId: model.id });
           if (draft.effort && !model.supportedReasoningEfforts.includes(draft.effort)) {
             draft.effort = model.defaultReasoningEffort;
-            draft.note = `Selected model ${model.id}; effort reverted to ${model.defaultReasoningEffort}.`;
+            draft.note = this.t("feishu.bridge.selectedModelResetEffort", {
+              modelId: model.id,
+              effort: model.defaultReasoningEffort,
+            });
           }
           break;
         }
         case "draft.select.effort": {
           const effort = action?.option as ReasoningEffort | undefined;
           if (!effort || !REASONING_EFFORT_VALUES.includes(effort)) {
-            draft.note = "Unsupported reasoning effort.";
+            draft.note = this.t("feishu.bridge.unsupportedReasoningEffort");
             break;
           }
           if (draft.model) {
             const models = await this.options.service.listModels();
             const model = models.find((entry) => entry.id === draft.model || entry.model === draft.model);
             if (!model) {
-              draft.note = `Configured model ${draft.model} is no longer available.`;
+              draft.note = this.t("feishu.bridge.configuredModelUnavailable", {
+                modelId: draft.model,
+              });
               break;
             }
             if (!model.supportedReasoningEfforts.includes(effort)) {
-              draft.note = `Model ${model.id} does not support effort ${effort}.`;
+              draft.note = this.t("feishu.bridge.modelDoesNotSupportEffort", {
+                modelId: model.id,
+                effort,
+              });
               break;
             }
           }
           draft.effort = effort;
-          draft.note = `Selected effort ${effort}.`;
+          draft.note = this.t("feishu.bridge.selectedEffort", { effort });
           break;
         }
         case "draft.toggle.plan-mode":
           draft.planMode = !draft.planMode;
-          draft.note = `Plan mode ${draft.planMode ? "enabled" : "disabled"}.`;
+          draft.note = draft.planMode
+            ? this.t("feishu.bridge.planModeEnabled")
+            : this.t("feishu.bridge.planModeDisabled");
           break;
         case "draft.select.sandbox": {
           const sandbox = action?.option as SandboxMode | undefined;
           if (!sandbox || !SANDBOX_MODE_VALUES.includes(sandbox)) {
-            draft.note = "Unsupported sandbox mode.";
+            draft.note = this.t("feishu.bridge.unsupportedSandboxMode");
             break;
           }
           draft.sandbox = sandbox;
-          draft.note = `Selected sandbox ${sandbox}.`;
+          draft.note = this.t("feishu.bridge.selectedSandbox", { sandbox });
           break;
         }
         case "draft.select.approval": {
           const approvalPolicy = action?.option as ApprovalPolicy | undefined;
           if (!approvalPolicy || !APPROVAL_POLICY_VALUES.includes(approvalPolicy)) {
-            draft.note = "Unsupported approval policy.";
+            draft.note = this.t("feishu.bridge.unsupportedApprovalPolicy");
             break;
           }
           draft.approvalPolicy = approvalPolicy;
-          draft.note = `Selected approval policy ${approvalPolicy}.`;
+          draft.note = this.t("feishu.bridge.selectedApprovalPolicy", { approvalPolicy });
           break;
         }
         case "draft.create": {
@@ -2613,7 +2686,7 @@ export class FeishuBridge {
 
           const boundTask = this.options.service.getTask(task.taskId) ?? task;
           const initialMessageQueued = Boolean(draft.prompt?.trim() || attachmentAssetIds.length);
-          const createdTaskNote = formatCreatedTaskNotice(task.taskId, initialMessageQueued);
+          const createdTaskNote = formatCreatedTaskNotice(task.taskId, initialMessageQueued, this.t);
           const messageId = event?.open_message_id ?? draft.cardMessageId;
           if (messageId) {
             await this.saveThreadTaskCard({
@@ -2659,7 +2732,7 @@ export class FeishuBridge {
           );
         }
         default:
-          draft.note = `Unsupported draft action ${value.kind}.`;
+          draft.note = this.t("feishu.bridge.unsupportedDraftAction", { kind: value.kind });
       }
 
       draft.cardRevision += 1;
@@ -2686,7 +2759,7 @@ export class FeishuBridge {
           taskTitle: archivedThread.taskTitle,
           archivedAt: archivedThread.archivedAt,
           messageId: event?.open_message_id,
-          note: formatArchivedThreadNotice(archivedThread.taskId),
+          note: formatArchivedThreadNotice(archivedThread.taskId, this.t),
         });
       }
 
@@ -2700,7 +2773,7 @@ export class FeishuBridge {
       return this.renderDraftCard({
         binding,
         draft: fallbackDraft,
-        note: "No bound task was found for this card.",
+        note: this.t("feishu.bridge.noBoundTaskForCard"),
       });
     }
 
@@ -2714,7 +2787,7 @@ export class FeishuBridge {
         const models = await this.options.service.listModels();
         const model = modelId ? models.find((entry) => entry.id === modelId || entry.model === modelId) : null;
         if (modelId && !model) {
-          note = `Unknown model: ${modelId}`;
+          note = this.t("feishu.bridge.unknownModel", { modelId });
           break;
         }
 
@@ -2728,9 +2801,14 @@ export class FeishuBridge {
 
         if (model && nextProfile.effort && !model.supportedReasoningEfforts.includes(nextProfile.effort)) {
           nextProfile.effort = model.defaultReasoningEffort;
-          note = `Selected model ${model.id}; effort reverted to ${model.defaultReasoningEffort}.`;
+          note = this.t("feishu.bridge.selectedModelResetEffort", {
+            modelId: model.id,
+            effort: model.defaultReasoningEffort,
+          });
         } else {
-          note = model ? `Selected model ${model.id}.` : "Reverted to runtime-default model.";
+          note = model
+            ? this.t("feishu.bridge.selectedModel", { modelId: model.id })
+            : this.t("feishu.bridge.revertedRuntimeDefaultModel");
         }
 
         await this.options.service.updateTaskSettings(task.taskId, {
@@ -2742,7 +2820,7 @@ export class FeishuBridge {
         const rawEffort = action?.option ?? "";
         const effort = rawEffort as ReasoningEffort | "";
         if (effort && !REASONING_EFFORT_VALUES.includes(effort)) {
-          note = "Unsupported reasoning effort.";
+          note = this.t("feishu.bridge.unsupportedReasoningEffort");
           break;
         }
 
@@ -2751,11 +2829,14 @@ export class FeishuBridge {
           const models = await this.options.service.listModels();
           const model = models.find((entry) => entry.id === modelId || entry.model === modelId);
           if (!model) {
-            note = `Configured model ${modelId} is no longer available.`;
+            note = this.t("feishu.bridge.configuredModelUnavailable", { modelId });
             break;
           }
           if (!model.supportedReasoningEfforts.includes(effort)) {
-            note = `Model ${model.id} does not support effort ${effort}.`;
+            note = this.t("feishu.bridge.modelDoesNotSupportEffort", {
+              modelId: model.id,
+              effort,
+            });
             break;
           }
         }
@@ -2769,7 +2850,9 @@ export class FeishuBridge {
             ...(task.executionProfile.approvalPolicy ? { approvalPolicy: task.executionProfile.approvalPolicy } : {}),
           },
         });
-        note = effort ? `Selected effort ${effort}.` : "Reverted to model-default effort.";
+        note = effort
+          ? this.t("feishu.bridge.selectedEffort", { effort })
+          : this.t("feishu.bridge.revertedModelDefaultEffort");
         break;
       }
       case "task.toggle.plan-mode":
@@ -2784,7 +2867,7 @@ export class FeishuBridge {
             ...(task.executionProfile.approvalPolicy ? { approvalPolicy: task.executionProfile.approvalPolicy } : {}),
           },
         });
-        note = `Plan mode ${nextPlanMode ? "enabled" : "disabled"}.`;
+        note = nextPlanMode ? this.t("feishu.bridge.planModeEnabled") : this.t("feishu.bridge.planModeDisabled");
         break;
         }
       case "task.toggle.feishu-running-mode": {
@@ -2794,15 +2877,15 @@ export class FeishuBridge {
         });
         note =
           nextMode === "queue"
-            ? "Feishu messages sent during a running turn will now queue for the next turn."
-            : "Feishu messages sent during a running turn will now steer the active turn immediately.";
+            ? this.t("feishu.bridge.runningMode.queue")
+            : this.t("feishu.bridge.runningMode.steer");
         break;
       }
       case "task.rename.open":
         await this.replyTaskRenameCard({
           task,
           binding,
-          note: "Submit a new task title here to update both Feishu and the VSCode monitor.",
+          note: this.t("feishu.bridge.renameSubmitPrompt"),
           replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
         });
         return;
@@ -2813,7 +2896,7 @@ export class FeishuBridge {
             task,
             binding,
             messageId: event?.open_message_id,
-            note: "Enter a non-empty title before submitting.",
+            note: this.t("feishu.bridge.emptyTitleBeforeSubmitting"),
           });
           return;
         }
@@ -2825,7 +2908,7 @@ export class FeishuBridge {
           task: renamedTask,
           binding,
           messageId: event?.open_message_id,
-          note: `Task renamed to ${renamedTask.title}.`,
+          note: this.t("feishu.bridge.taskRenamedTo", { title: renamedTask.title }),
         });
         return;
       }
@@ -2833,14 +2916,14 @@ export class FeishuBridge {
         await this.replyTaskStatusSnapshotCard({
           task,
           binding,
-          note: formatTaskSummary(task),
+          note: formatTaskSummary(task, this.options.config.feishuUiLanguage),
           replyTargetId: binding.rootMessageId ?? event?.open_message_id ?? currentCard?.messageId ?? binding.threadKey,
         });
         return;
       case "task.withdraw-queued-message": {
         const receiptId = value.queuedMessageId;
         if (!receiptId) {
-          note = "This activity card is missing its queued-message id.";
+          note = this.t("feishu.bridge.missingQueuedMessageId");
           break;
         }
         try {
@@ -2862,7 +2945,7 @@ export class FeishuBridge {
         const receiptId = value.queuedMessageId;
         try {
           await this.options.service.forceStartQueuedMessage(task.taskId, receiptId);
-          note = "Forced this queued Feishu message to run immediately.";
+          note = this.t("feishu.bridge.forcedQueuedMessage");
         } catch (error) {
           note = error instanceof Error ? error.message : String(error);
         }
@@ -2881,7 +2964,7 @@ export class FeishuBridge {
       }
       case "task.interrupt":
         await this.options.service.interruptTask(task.taskId);
-        note = `Interrupted task ${task.taskId}.`;
+        note = this.t("feishu.bridge.interruptedTask", { taskId: task.taskId });
         break;
       case "task.retry":
         await this.options.service.sendMessage(task.taskId, {
@@ -2889,7 +2972,7 @@ export class FeishuBridge {
           source: "feishu",
           replyToFeishu: true,
         });
-        note = `Queued retry for task ${task.taskId}.`;
+        note = this.t("feishu.bridge.queuedRetry", { taskId: task.taskId });
         break;
       case "task.archive": {
         const archivedAt = new Date().toISOString();
@@ -2911,7 +2994,7 @@ export class FeishuBridge {
           taskTitle: task.title,
           archivedAt,
           messageId: event?.open_message_id ?? currentCard?.messageId,
-          note: "Archived this topic. Continue the host task from VSCode or CLI, or start a new Feishu topic for more work.",
+          note: this.t("feishu.bridge.archivedTopicContinueElsewhere"),
         });
       }
       case "task.approve":
@@ -2923,11 +3006,14 @@ export class FeishuBridge {
           task.pendingApprovals.find((entry) => entry.requestId === value.requestId && entry.state === "pending") ??
           task.pendingApprovals.find((entry) => entry.state === "pending");
         if (!approval) {
-          note = "No pending approval is available.";
+          note = this.t("feishu.bridge.noPendingApproval");
           break;
         }
         await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
-        note = `Approval ${approval.requestId} resolved as ${decision}.`;
+        note = this.t("feishu.bridge.approvalResolvedAs", {
+          requestId: approval.requestId,
+          decision,
+        });
         break;
       }
       case "task.unbind":
@@ -2944,7 +3030,7 @@ export class FeishuBridge {
           return this.renderDraftCard({
             binding,
             draft: resetDraft,
-            note: `Thread unbound from ${task.taskId}. Send plain text to start a new draft.`,
+            note: this.t("feishu.bridge.threadUnboundSendPlainText", { taskId: task.taskId }),
           });
         }
       case "task.inspect.global": {
@@ -2956,7 +3042,7 @@ export class FeishuBridge {
             queryLabel = "All Tasks";
             break;
           case "task":
-            note = formatTaskSummary(task);
+            note = formatTaskSummary(task, this.options.config.feishuUiLanguage);
             queryLabel = "Current Task";
             break;
           case "health":
@@ -2972,7 +3058,7 @@ export class FeishuBridge {
             queryLabel = "Rate Limits";
             break;
           default:
-            note = "Select one of Task, Tasks, Health, Account, or Limits.";
+            note = this.t("feishu.bridge.selectInspectionPrompt");
         }
         if (action?.option === "tasks" || action?.option === "task" || action?.option === "health" || action?.option === "account" || action?.option === "limits") {
           await this.replyTaskInspectionSnapshotCard({
