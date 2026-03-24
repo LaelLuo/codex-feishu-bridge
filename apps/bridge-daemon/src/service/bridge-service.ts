@@ -354,6 +354,18 @@ function normalizeConversationMessage(message: ConversationMessage): Conversatio
   };
 }
 
+function sameFeishuBinding(left: FeishuThreadBinding | undefined, right: FeishuThreadBinding | undefined): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.chatId === right.chatId &&
+    left.threadKey === right.threadKey &&
+    (left.rootMessageId ?? "") === (right.rootMessageId ?? "")
+  );
+}
+
 function mapRuntimeStatus(status: unknown): TaskStatus {
   const normalizedStatus =
     status && typeof status === "object"
@@ -1186,6 +1198,28 @@ export class BridgeService {
   }
 
   async importThreads(threadId?: string): Promise<BridgeTask[]> {
+    if (threadId) {
+      const existingTask = this.tasks.get(threadId);
+      if (existingTask) {
+        const descriptor = await this.options.runtime.readThread(threadId);
+        if (descriptor) {
+          this.upsertTaskFromDescriptor(descriptor, existingTask.mode);
+          this.touchTask(existingTask, descriptor.updatedAt ?? descriptor.createdAt ?? existingTask.updatedAt);
+        }
+        await this.hydrateImportedTaskExecutionProfile(existingTask);
+        await this.hydrateImportedTaskConversation(existingTask);
+        if (descriptor) {
+          await this.persistState();
+          this.emitEvent(existingTask.taskId, "task.updated", {
+            task: cloneTask(existingTask),
+            imported: true,
+            importedReason: "existing-thread-refresh",
+          });
+        }
+        return [cloneTask(existingTask)];
+      }
+    }
+
     const descriptors = threadId
       ? [await this.options.runtime.resumeThread(threadId)]
       : await this.options.runtime.listThreads();
@@ -1379,6 +1413,16 @@ export class BridgeService {
   async bindFeishuThread(taskId: string, binding: FeishuThreadBinding): Promise<BridgeTask> {
     const task = this.requireTask(taskId);
     await this.hydrateImportedTaskExecutionProfile(task);
+    if (task.feishuBinding) {
+      if (sameFeishuBinding(task.feishuBinding, binding)) {
+        return cloneTask(task);
+      }
+
+      throw new Error(
+        `Task ${taskId} is already bound to a different Feishu thread. Unbind it first or use /bind to move it explicitly.`,
+      );
+    }
+
     task.feishuBinding = binding;
     task.feishuBindingDisabled = false;
     task.desktopReplySyncToFeishu = true;

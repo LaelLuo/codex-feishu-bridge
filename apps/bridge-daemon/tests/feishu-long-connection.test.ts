@@ -535,6 +535,128 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
     }
   });
 
+  it("keeps the original binding when another Feishu thread tries to import the same task again", async () => {
+    const harness = await createHarness();
+
+    try {
+      const externalThread = (harness.runtime as MockCodexRuntime).seedExternalThread({
+        id: "thr_import_binding_conflict",
+        name: "External CLI thread for conflict",
+      });
+
+      await harness.onMessage(
+        {
+          message_id: "om_plain_import_first",
+          thread_id: "omt_import_first",
+          root_id: "om_root_import_first",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "bind this existing thread here first" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_import_first",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
+        "first draft card reply before import",
+      );
+
+      const firstDraftEntries = (
+        harness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string }> }
+      ).threadDrafts;
+      const firstDraftCard = firstDraftEntries.get("oc_chat_id:omt_import_first");
+      assert.ok(firstDraftCard?.cardMessageId);
+
+      await harness.onCardAction({
+        open_message_id: firstDraftCard.cardMessageId,
+        open_id: "ou_import_first",
+        action: {
+          tag: "button",
+          form_value: {
+            thread_id_input: externalThread.id,
+          },
+          value: {
+            kind: "draft.import.submit",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_first",
+            rootMessageId: "om_root_import_first",
+            revision: 1,
+          },
+        },
+      });
+
+      await waitFor(
+        () => harness.service.getTask(externalThread.id)?.feishuBinding?.threadKey === "omt_import_first",
+        "first imported task binding",
+      );
+
+      await harness.onMessage(
+        {
+          message_id: "om_plain_import_second",
+          thread_id: "omt_import_second",
+          root_id: "om_root_import_second",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "try importing the same task again" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_import_second",
+          },
+        },
+      );
+
+      const secondDraftEntries = (
+        harness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string }> }
+      ).threadDrafts;
+      const secondDraftCard = secondDraftEntries.get("oc_chat_id:omt_import_second");
+      assert.ok(secondDraftCard?.cardMessageId);
+
+      await harness.onCardAction({
+        open_message_id: secondDraftCard.cardMessageId,
+        open_id: "ou_import_second",
+        action: {
+          tag: "button",
+          form_value: {
+            thread_id_input: externalThread.id,
+          },
+          value: {
+            kind: "draft.import.submit",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_second",
+            rootMessageId: "om_root_import_second",
+            revision: 1,
+          },
+        },
+      });
+
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${secondDraftCard.cardMessageId}`) &&
+              requestContainsCardTitle(request, "Import Existing Thread") &&
+              requestContainsCardText(request, "already bound to a different Feishu thread"),
+          ),
+        "binding conflict shown on second import form",
+      );
+
+      assert.deepEqual(harness.service.getTask(externalThread.id)?.feishuBinding, {
+        chatId: "oc_chat_id",
+        threadKey: "omt_import_first",
+        rootMessageId: "om_root_import_first",
+      });
+      assert.ok(secondDraftEntries.get("oc_chat_id:omt_import_second"));
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("updates the draft card through long-connection card actions and falls back to the model default effort", async () => {
     const harness = await createHarness();
 

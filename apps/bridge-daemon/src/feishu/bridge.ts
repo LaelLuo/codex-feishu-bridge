@@ -2811,8 +2811,19 @@ export class FeishuBridge {
             return;
           }
 
-          this.deleteArchivedThread(binding);
-          await this.options.service.bindFeishuThread(importedTask.taskId, binding);
+          try {
+            this.deleteArchivedThread(binding);
+            await this.options.service.bindFeishuThread(importedTask.taskId, binding);
+          } catch (error) {
+            await this.patchDraftImportCard({
+              binding,
+              draft,
+              messageId: event?.open_message_id,
+              note: error instanceof Error ? error.message : String(error),
+              defaultThreadId: submittedThreadId,
+            });
+            return;
+          }
           this.deleteThreadDraft(binding);
 
           const boundTask = this.options.service.getTask(importedTask.taskId) ?? importedTask;

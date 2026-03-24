@@ -87,6 +87,7 @@ class FakeStatusRuntime implements CodexRuntime {
   ];
   private requiresResumeBeforeStartTurn = false;
   private readonly resumedThreadIds = new Set<string>();
+  private readonly resumeThreadCalls = new Map<string, number>();
   private lastStartTurnApprovalPolicy: ApprovalPolicy | undefined;
   private lastStartTurnSandbox: SandboxMode | undefined;
   private startTurnCallCount = 0;
@@ -144,12 +145,13 @@ class FakeStatusRuntime implements CodexRuntime {
     return this.threads;
   }
 
-  async readThread(): Promise<CodexThreadDescriptor | null> {
-    return null;
+  async readThread(threadId: string): Promise<CodexThreadDescriptor | null> {
+    return this.threads.find((thread) => thread.id === threadId) ?? null;
   }
 
   async resumeThread(threadId: string): Promise<CodexThreadDescriptor> {
     this.resumedThreadIds.add(threadId);
+    this.resumeThreadCalls.set(threadId, (this.resumeThreadCalls.get(threadId) ?? 0) + 1);
     return (
       this.threads.find((thread) => thread.id === threadId) ?? {
         id: threadId,
@@ -217,6 +219,10 @@ class FakeStatusRuntime implements CodexRuntime {
 
   hasResumedThread(threadId: string): boolean {
     return this.resumedThreadIds.has(threadId);
+  }
+
+  getResumeThreadCallCount(threadId: string): number {
+    return this.resumeThreadCalls.get(threadId) ?? 0;
   }
 
   getLastStartTurnApprovalPolicy(): ApprovalPolicy | undefined {
@@ -404,6 +410,107 @@ describe("bridge service runtime status mapping", () => {
     });
     assert.equal(runtime.getLastStartTurnApprovalPolicy(), "never");
     assert.equal(runtime.getLastStartTurnSandbox(), "danger-full-access");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("treats explicit import of an already imported thread as idempotent and does not resume twice", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-import-idempotent-test");
+    await prepareBridgeDirectories(config);
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-idempotent-import",
+        name: "Idempotent import thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T03:12:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const firstImport = await service.importThreads("thread-idempotent-import");
+    assert.equal(firstImport.length, 1);
+    assert.equal(firstImport[0]?.status, "idle");
+    assert.equal(runtime.getResumeThreadCallCount("thread-idempotent-import"), 1);
+
+    runtime.setThreads([
+      {
+        id: "thread-idempotent-import",
+        name: "Idempotent import thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T03:13:00.000Z",
+        status: {
+          type: "active",
+          activeFlags: [],
+        },
+      },
+    ]);
+
+    const secondImport = await service.importThreads("thread-idempotent-import");
+    assert.equal(secondImport.length, 1);
+    assert.equal(secondImport[0]?.taskId, "thread-idempotent-import");
+    assert.equal(secondImport[0]?.status, "running");
+    assert.equal(runtime.getResumeThreadCallCount("thread-idempotent-import"), 1);
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("rejects rebinding a task to a different feishu thread without an explicit unbind", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-prevent-feishu-rebind-test");
+    await prepareBridgeDirectories(config);
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-binding-guard",
+        name: "Binding guard thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T03:14:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    await service.importThreads("thread-binding-guard");
+    await service.bindFeishuThread("thread-binding-guard", {
+      chatId: "oc_first_chat",
+      threadKey: "omt_first_thread",
+      rootMessageId: "om_first_root",
+    });
+
+    await assert.rejects(
+      () =>
+        service.bindFeishuThread("thread-binding-guard", {
+          chatId: "oc_second_chat",
+          threadKey: "omt_second_thread",
+          rootMessageId: "om_second_root",
+        }),
+      /already bound to a different feishu thread/i,
+    );
+
+    assert.deepEqual(service.getTask("thread-binding-guard")?.feishuBinding, {
+      chatId: "oc_first_chat",
+      threadKey: "omt_first_thread",
+      rootMessageId: "om_first_root",
+    });
 
     await service.dispose();
     await runtime.dispose();
