@@ -36,6 +36,10 @@ interface LongConnectionHarness {
   onCardAction: (event?: unknown) => Promise<unknown>;
 }
 
+interface CreateHarnessOptions {
+  namespace?: string;
+}
+
 function parseMessageText(request: RequestRecord): string {
   const payload = JSON.parse(request.body ?? "{}") as { content?: string };
   if (!payload.content) {
@@ -146,8 +150,11 @@ async function waitFor(check: () => boolean, message: string): Promise<void> {
   throw new Error(`Timed out waiting for ${message}`);
 }
 
-async function createHarness(envOverrides: Record<string, string> = {}): Promise<LongConnectionHarness> {
-  const namespace = randomUUID();
+async function createHarness(
+  envOverrides: Record<string, string> = {},
+  options: CreateHarnessOptions = {},
+): Promise<LongConnectionHarness> {
+  const namespace = options.namespace ?? randomUUID();
   const config = createTestBridgeConfig(namespace, {
     CODEX_RUNTIME_BACKEND: "mock",
     FEISHU_BASE_URL: "https://open.feishu.cn",
@@ -2300,6 +2307,187 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       assert.equal(harness.service.getTask(task.taskId)?.conversation.length ?? 0, previousConversationLength);
     } finally {
       await harness.cleanup();
+    }
+  });
+
+  it("restores archived thread behavior after restart", async () => {
+    const namespace = randomUUID();
+    let firstHarness: LongConnectionHarness | null = null;
+    let secondHarness: LongConnectionHarness | null = null;
+
+    try {
+      firstHarness = await createHarness({}, { namespace });
+      const task = await firstHarness.service.createTask({
+        title: "Archived restart task",
+      });
+
+      await firstHarness.onMessage(
+        {
+          message_id: "om_archive_restart_bind",
+          thread_id: "omt_archive_restart",
+          root_id: "om_root_archive_restart",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: `/bind ${task.taskId}` }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_archive_restart",
+          },
+        },
+      );
+      await waitFor(
+        () => firstHarness?.service.getTask(task.taskId)?.feishuBinding?.threadKey === "omt_archive_restart",
+        "archive restart bind",
+      );
+
+      const archivedCard = await firstHarness.onCardAction({
+        open_message_id: "om_card_archive_restart",
+        open_id: "ou_archive_restart",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.archive",
+            chatId: "oc_chat_id",
+            threadKey: "omt_archive_restart",
+            rootMessageId: "om_root_archive_restart",
+            taskId: task.taskId,
+            revision: 1,
+          },
+        },
+      });
+
+      assert.ok(archivedCard);
+      assert.equal(firstHarness.service.getTask(task.taskId)?.feishuBinding, undefined);
+      await firstHarness.cleanup();
+      firstHarness = null;
+
+      secondHarness = await createHarness({}, { namespace });
+      const restoredArchivedThreads = (
+        secondHarness.feishu as unknown as { archivedThreads: Map<string, { taskId?: string }> }
+      ).archivedThreads;
+      assert.equal(restoredArchivedThreads.get("oc_chat_id:omt_archive_restart")?.taskId, task.taskId);
+
+      await secondHarness.onMessage(
+        {
+          message_id: "om_archive_restart_after",
+          thread_id: "omt_archive_restart",
+          root_id: "om_root_archive_restart",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello after restart" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_archive_restart",
+          },
+        },
+      );
+
+      await waitFor(
+        () =>
+          secondHarness?.requests.some(
+            (request) => parseMessageText(request).includes("This Feishu topic is archived"),
+          ) ?? false,
+        "archived-thread reply after restart",
+      );
+    } finally {
+      await firstHarness?.cleanup();
+      await secondHarness?.cleanup();
+    }
+  });
+
+  it("restores unbound draft behavior after restart", async () => {
+    const namespace = randomUUID();
+    let firstHarness: LongConnectionHarness | null = null;
+    let secondHarness: LongConnectionHarness | null = null;
+
+    try {
+      firstHarness = await createHarness({}, { namespace });
+      const task = await firstHarness.service.createTask({
+        title: "Unbound draft restart task",
+      });
+
+      await firstHarness.feishu.bindTaskToNewTopic(task.taskId);
+      await waitFor(
+        () =>
+          firstHarness?.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              requestContainsCardTitle(request, `Task: ${task.title}`),
+          ) ?? false,
+        "initial bound task card before unbind restart",
+      );
+
+      const taskCards = (
+        firstHarness.feishu as unknown as { threadTaskCards: Map<string, { messageId: string }> }
+      ).threadTaskCards;
+      const bindingBeforeUnbind = {
+        chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+        threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+        rootMessageId: task.feishuBinding?.rootMessageId,
+      };
+      const currentCard = taskCards.get(`${bindingBeforeUnbind.chatId}:${bindingBeforeUnbind.threadKey}`);
+      assert.ok(currentCard?.messageId);
+
+      const unbindResult = await firstHarness.onCardAction({
+        open_message_id: currentCard?.messageId,
+        open_id: "ou_unbind_restart",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.unbind",
+            chatId: bindingBeforeUnbind.chatId,
+            threadKey: bindingBeforeUnbind.threadKey,
+            rootMessageId: bindingBeforeUnbind.rootMessageId,
+            taskId: task.taskId,
+            revision: 1,
+          },
+        },
+      });
+
+      assert.ok(unbindResult);
+      assert.equal(firstHarness.service.getTask(task.taskId)?.feishuBinding, undefined);
+      await firstHarness.cleanup();
+      firstHarness = null;
+
+      secondHarness = await createHarness({}, { namespace });
+      const restoredDrafts = (
+        secondHarness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string; note?: string }> }
+      ).threadDrafts;
+      const restoredDraft = restoredDrafts.get(`${bindingBeforeUnbind.chatId}:${bindingBeforeUnbind.threadKey}`);
+      assert.equal(restoredDraft?.cardMessageId, currentCard?.messageId);
+
+      await secondHarness.onMessage(
+        {
+          message_id: "om_unbind_restart_after",
+          thread_id: bindingBeforeUnbind.threadKey,
+          root_id: bindingBeforeUnbind.rootMessageId,
+          chat_id: bindingBeforeUnbind.chatId,
+          message_type: "text",
+          content: JSON.stringify({ text: "restart draft prompt" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_unbind_restart",
+          },
+        },
+      );
+
+      await waitFor(
+        () =>
+          secondHarness?.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${currentCard?.messageId}`) &&
+              requestContainsCardTitle(request, "Create Codex Task") &&
+              requestContainsCardText(request, "restart draft prompt"),
+          ) ?? false,
+        "draft card patch after restart",
+      );
+    } finally {
+      await firstHarness?.cleanup();
+      await secondHarness?.cleanup();
     }
   });
 

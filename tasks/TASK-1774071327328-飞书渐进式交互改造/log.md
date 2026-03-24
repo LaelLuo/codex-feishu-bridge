@@ -35,3 +35,5 @@
 - 2026-03-24T08:33:00.000Z [agent] 第二轮 reviewer 进一步指出：`task.archive` / `task.unbind` 不能把“解绑成功后的本地收尾失败”吞回普通任务卡，否则会出现真实绑定已断开但 UI 仍像可继续操作的状态撒谎。
 - 2026-03-24T08:33:00.000Z [agent] 已把 `archive` / `unbind` 改成分段处理：先完成真正的解绑副作用，再独立处理持久化收尾；若收尾持久化失败，只记 warn，但仍稳定返回 archived card / draft card，不再回落到 bound task card。
 - 2026-03-24T08:33:00.000Z [agent] 同步补齐 reviewer 指出的漏测分支：新增 archive 持久化失败、unbind 持久化失败、`task.retry`、`task.unbind`、`task.decline`、`task.cancel-approval` 的失败路径回归测试；重新验证 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`（32 pass）、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts`（7 pass）与 `bun run typecheck:daemon` 通过。
+- 2026-03-24T09:05:00.000Z [agent] 继续把刚修好的恢复语义锁进回归测试：长连接测试新增跨重启场景，覆盖 archived 线程在 bridge 重启后仍按 archived 话题响应，以及 unbind 后的 draft 卡在重启后仍可恢复并继续 patch 到原卡。
+- 2026-03-24T09:05:00.000Z [agent] 为了让跨重启测试复用同一持久化命名空间，`createHarness` 新增可选 `namespace` 参数；验证已重新通过 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`（34 pass）、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts`（7 pass）与 `bun run typecheck:daemon`。
