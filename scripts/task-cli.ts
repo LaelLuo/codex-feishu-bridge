@@ -12,6 +12,15 @@ type TaskStatus =
   | "done"
   | "cancelled";
 
+const taskStatuses = [
+  "draft",
+  "in_progress",
+  "blocked",
+  "review",
+  "done",
+  "cancelled",
+] as const satisfies readonly TaskStatus[];
+
 type TaskMeta = {
   id: string;
   title: string;
@@ -98,6 +107,10 @@ const nextActionOpenStatuses = new Set<NextActionStatus>(["open", "blocked"]);
 const nextActionClosedStatuses = new Set<NextActionStatus>(["done", "obsolete"]);
 const legacyActionIdBase = 1700000000000;
 let lastGeneratedNextActionTimestamp = 0;
+
+function isTaskStatus(value: string): value is TaskStatus {
+  return taskStatuses.includes(value as TaskStatus);
+}
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) {
@@ -677,15 +690,6 @@ function updateTask(taskId: string, args: string[]): void {
     if (!current) {
       return;
     }
-
-    const validStatuses: TaskStatus[] = [
-      "draft",
-      "in_progress",
-      "blocked",
-      "review",
-      "done",
-      "cancelled",
-    ];
     const { taskPath, meta } = current;
 
     for (let index = 0; index < args.length; index += 1) {
@@ -694,12 +698,12 @@ function updateTask(taskId: string, args: string[]): void {
 
       switch (arg) {
         case "--status":
-          if (!value || !validStatuses.includes(value as TaskStatus)) {
-            console.error("无效状态，允许值：", validStatuses.join(", "));
+          if (!value || !isTaskStatus(value)) {
+            console.error("无效状态，允许值：", taskStatuses.join(", "));
             process.exitCode = 1;
             return;
           }
-          meta.status = value as TaskStatus;
+          meta.status = value;
           index += 1;
           break;
         case "--title":
@@ -1210,6 +1214,7 @@ function doctorTask(taskId?: string): void {
 
     const meta = loadTaskMeta(taskPath);
     const locationArchived = taskPath.startsWith(archivedDir);
+    const statusValue = String(meta.status);
 
     requiredTaskFiles.forEach((file) => {
       if (!existsSync(resolve(taskPath, file))) {
@@ -1221,6 +1226,12 @@ function doctorTask(taskId?: string): void {
 
     if (meta.archived !== locationArchived) {
       console.log(`[ERROR] ${id}: archived=${meta.archived} 与目录位置不一致`);
+      hasError = true;
+      taskHasError = true;
+    }
+
+    if (!isTaskStatus(statusValue)) {
+      console.log(`[ERROR] ${id}: status=${statusValue} 不属于允许集合 ${taskStatuses.join(", ")}`);
       hasError = true;
       taskHasError = true;
     }

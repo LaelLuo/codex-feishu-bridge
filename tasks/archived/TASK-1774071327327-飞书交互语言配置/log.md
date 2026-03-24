@@ -6,3 +6,4 @@
 - 2026-03-21T06:27:27.2539051Z [agent] 在 `apps/bridge-daemon` 新增正式 i18n 资源层，并把 draft/task/activity/status/inspection/archive 卡片及首批交互通知接入本地化。
 - 2026-03-21T06:27:27.2539051Z [agent] 更新 `README.md`、`docs/README.en.md`、`docs/architecture.md`，补充 `FEISHU_UI_LANGUAGE` 的公开配置说明。
 - 2026-03-21T06:27:27.2539051Z [agent] 已完成验证：`packages/shared` 测试通过，`apps/bridge-daemon` 飞书卡片与长连接测试通过，shared 与 bridge-daemon 类型检查通过。
+- 2026-03-24T10:39:10.250Z [agent] 任务状态更新为 done：对齐历史遗留的非法状态 completed；归档仅保留目录位置，业务状态统一收口为 done
