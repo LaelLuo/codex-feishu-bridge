@@ -49,6 +49,64 @@ function parseMessageText(request: RequestRecord): string {
   }
 }
 
+function parsePostTexts(request: RequestRecord): string[] {
+  const payload = JSON.parse(request.body ?? "{}") as { content?: string; msg_type?: string };
+  if (payload.msg_type !== "post" || !payload.content) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(payload.content) as Record<string, unknown>;
+    const localeBlock = Object.values(parsed).find(
+      (value) =>
+        value &&
+        typeof value === "object" &&
+        Array.isArray((value as { content?: unknown }).content),
+    ) as { content?: Array<Array<{ tag?: string; text?: string }>> } | undefined;
+    if (!localeBlock?.content) {
+      return [];
+    }
+
+    const texts: string[] = [];
+    for (const line of localeBlock.content) {
+      for (const item of line) {
+        if (item?.tag === "md" && typeof item.text === "string") {
+          texts.push(item.text);
+        }
+      }
+    }
+    return texts;
+  } catch {
+    return [];
+  }
+}
+
+function countMarkdownFenceMarkers(text: string): number {
+  return text
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("```")).length;
+}
+
+function hasDanglingSurrogate(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        return true;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function parseInteractiveCard(request: RequestRecord): Record<string, unknown> | null {
   const payload = JSON.parse(request.body ?? "{}") as { content?: string; msg_type?: string };
   if ((payload.msg_type !== undefined && payload.msg_type !== "interactive") || !payload.content) {
@@ -306,8 +364,21 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       );
 
       await waitFor(
-        () => harness.requests.some((request) => parseMessageText(request).includes("Mock response for: hello before binding")),
+        () => harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("Mock response for: hello before binding"))),
         "first final agent reply",
+      );
+      assert.equal(
+        harness.requests.some(
+          (request) =>
+            request.method === "POST" &&
+            request.url.includes("/open-apis/im/v1/messages/") &&
+            parsePostTexts(request).some((text) => text.includes("Mock response for: hello before binding")),
+        ),
+        true,
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardTitle(request, "Codex Reply")),
+        false,
       );
 
       await harness.onMessage(
@@ -349,7 +420,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       );
       await waitFor(
         () =>
-          harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second prompt")) ||
+          harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("Mock response for: second prompt"))) ||
           (harness.service.getTask(createdTask!.taskId)?.queuedMessageCount ?? 0) > 0,
         "follow-up reply or queue receipt",
       );
@@ -407,6 +478,50 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         harness.requests.some((request) => requestContainsCardText(request, "codex-feishu-bridge")),
         false,
       );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("splits long agent replies into multiple post markdown messages instead of falling back to cards", async () => {
+    const harness = await createHarness();
+
+    try {
+      const replyWithAgentMessage = (harness.feishu as unknown as {
+        replyWithAgentMessage(messageId: string, text: string): Promise<string>;
+      }).replyWithAgentMessage.bind(harness.feishu);
+      const longReply = [
+        "## Deploy Plan",
+        "",
+        "```ts",
+        `const rocket = "${"🚀".repeat(3600)}";`,
+        "console.log(rocket);",
+        "",
+        "```",
+        "",
+        "## Notes",
+        "",
+        "A".repeat(2200),
+        "",
+        "## Next",
+        "",
+        "B".repeat(2200),
+      ].join("\n");
+
+      await replyWithAgentMessage("om_long_reply_target", longReply);
+
+      const postReplies = harness.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.url.endsWith("/open-apis/im/v1/messages/om_long_reply_target/reply") &&
+          parsePostTexts(request).length > 0,
+      );
+      assert.ok(postReplies.length > 1);
+      const postTexts = postReplies.flatMap((request) => parsePostTexts(request));
+      assert.equal(postTexts.every((text) => text.trim().length > 0), true);
+      assert.equal(postTexts.every((text) => countMarkdownFenceMarkers(text) % 2 === 0), true);
+      assert.equal(postTexts.every((text) => !hasDanglingSurrogate(text)), true);
+      assert.equal(postReplies.some((request) => requestContainsCardTitle(request, "Codex Reply")), false);
     } finally {
       await harness.cleanup();
     }
@@ -2024,6 +2139,70 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       );
       await delay(50);
       assert.equal(harness.service.getTask(task.taskId)?.conversation.length ?? 0, beforeConversationLength);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("allows /bind to explicitly move an already-bound task onto the current Feishu thread", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Move me",
+        prompt: "Start here",
+      });
+
+      await harness.onMessage(
+        {
+          message_id: "om_bind_first",
+          thread_id: "omt_bind_first",
+          root_id: "om_root_bind_first",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: `/bind ${task.taskId}` }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_first",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.service.getTask(task.taskId)?.feishuBinding?.threadKey === "omt_bind_first",
+        "first slash bind",
+      );
+
+      await harness.onMessage(
+        {
+          message_id: "om_bind_second",
+          thread_id: "omt_bind_second",
+          root_id: "om_root_bind_second",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: `/bind ${task.taskId}` }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_bind_second",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.service.getTask(task.taskId)?.feishuBinding?.threadKey === "omt_bind_second",
+        "rebound slash bind",
+      );
+      assert.deepEqual(harness.service.getTask(task.taskId)?.feishuBinding, {
+        chatId: "oc_chat_id",
+        threadKey: "omt_bind_second",
+        rootMessageId: "om_root_bind_second",
+      });
+      assert.equal(
+        harness.requests.some((request) => parseMessageText(request).includes("already bound to a different Feishu thread")),
+        false,
+      );
     } finally {
       await harness.cleanup();
     }

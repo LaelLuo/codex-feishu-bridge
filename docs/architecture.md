@@ -66,6 +66,8 @@
 - 已绑定任务卡提供 `Rename Task`、`Archive Task`、`Unbind Thread` 和 `More` 查询入口
 - `Rename Task` 会先下发一张独立的重命名卡；提交后会更新共享 task 标题，并同步回 VSCode monitor 与 Feishu 主任务卡
 - 任意一条 Feishu 文本、图片、文件消息都会立即回一张独立的 `Task Activity` 卡，说明这条消息是直接开始 turn、注入当前 turn、还是排队到下一轮
+- 普通 Codex/agent 回复默认使用 Feishu `post + md` 富文本发送；标题、列表、代码块等 Markdown 内容优先按原样渲染，而不是再退回 interactive card
+- 超长 agent 回复会按安全字符边界拆成多条连续 post；bridge 自己的 slash/status/help/错误文本回执仍保留普通 `text`
 - 当消息因任务忙碌而排队时，独立 `Task Activity` 卡会提供 `Withdraw This Message` 和 `Run This Message Now` / `Interrupt + Run This Message Now`
 - `More` 菜单里的状态、任务、健康度、账号、额度查询都通过新的只读快照卡回复，而不是覆盖主任务卡
 - `Archive Task` 会终结当前 Feishu 话题的 bridge 绑定能力；后续同话题里的文本、图片、文件不会再继续同步到主机任务

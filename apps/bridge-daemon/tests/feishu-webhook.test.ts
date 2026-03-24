@@ -40,6 +40,38 @@ function parseMessageText(request: RequestRecord): string {
   }
 }
 
+function parsePostTexts(request: RequestRecord): string[] {
+  const payload = JSON.parse(request.body ?? "{}") as { content?: string; msg_type?: string };
+  if (payload.msg_type !== "post" || !payload.content) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(payload.content) as Record<string, unknown>;
+    const localeBlock = Object.values(parsed).find(
+      (value) =>
+        value &&
+        typeof value === "object" &&
+        Array.isArray((value as { content?: unknown }).content),
+    ) as { content?: Array<Array<{ tag?: string; text?: string }>> } | undefined;
+    if (!localeBlock?.content) {
+      return [];
+    }
+
+    const texts: string[] = [];
+    for (const line of localeBlock.content) {
+      for (const item of line) {
+        if (item?.tag === "md" && typeof item.text === "string") {
+          texts.push(item.text);
+        }
+      }
+    }
+    return texts;
+  } catch {
+    return [];
+  }
+}
+
 function parseInteractiveCard(request: RequestRecord): Record<string, unknown> | null {
   const payload = JSON.parse(request.body ?? "{}") as { content?: string; msg_type?: string };
   if ((payload.msg_type !== undefined && payload.msg_type !== "interactive") || !payload.content) {
@@ -331,8 +363,12 @@ describe("feishu bridge", { concurrency: 1 }, () => {
         false,
       );
       await waitFor(
-        () => harness.requests.some((request) => parseMessageText(request).includes("Mock response for: hello from webhook")),
+        () => harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("Mock response for: hello from webhook"))),
         "webhook final agent reply",
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "Mock response for: hello from webhook")),
+        false,
       );
 
       const previousConversationLength = harness.service.getTask(createdTask!.taskId)?.conversation.length ?? 0;
@@ -363,12 +399,12 @@ describe("feishu bridge", { concurrency: 1 }, () => {
         () =>
           (harness.service.getTask(createdTask!.taskId)?.conversation.length ?? 0) > previousConversationLength ||
           (harness.service.getTask(createdTask!.taskId)?.queuedMessageCount ?? 0) > 0 ||
-          harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second webhook prompt")),
+          harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("Mock response for: second webhook prompt"))),
         "follow-up routing",
       );
       if ((harness.service.getTask(createdTask!.taskId)?.queuedMessageCount ?? 0) === 0) {
         await waitFor(
-          () => harness.requests.some((request) => parseMessageText(request).includes("Mock response for: second webhook prompt")),
+          () => harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("Mock response for: second webhook prompt"))),
           "follow-up final reply",
         );
       }
@@ -533,7 +569,7 @@ describe("feishu bridge", { concurrency: 1 }, () => {
       });
 
       await waitFor(
-        () => harness.requests.some((request) => parseMessageText(request).includes("Second imported answer")),
+        () => harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("Second imported answer"))),
         "imported delta reply sync",
       );
     } finally {
@@ -541,7 +577,7 @@ describe("feishu bridge", { concurrency: 1 }, () => {
     }
   });
 
-  it("renders markdown-heavy agent replies as interactive cards instead of plain text messages", async () => {
+  it("renders markdown-heavy agent replies as post markdown messages instead of interactive cards", async () => {
     const harness = await createHarness();
 
     try {
@@ -571,14 +607,20 @@ describe("feishu bridge", { concurrency: 1 }, () => {
       });
 
       await waitFor(
-        () => harness.requests.some((request) => requestContainsCardText(request, "# Deploy Plan")),
-        "markdown reply card sync",
+        () => harness.requests.some((request) => parsePostTexts(request).some((text) => text.includes("# Deploy Plan"))),
+        "markdown reply post sync",
       );
       assert.equal(
         harness.requests.some(
           (request) =>
-            request.method === "POST" && request.url.includes("/open-apis/im/v1/messages/") && parseMessageText(request).includes("# Deploy Plan"),
+            request.method === "POST" &&
+            request.url.includes("/open-apis/im/v1/messages/") &&
+            parsePostTexts(request).some((text) => text.includes("# Deploy Plan")),
         ),
+        true,
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "# Deploy Plan")),
         false,
       );
     } finally {

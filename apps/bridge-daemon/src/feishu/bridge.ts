@@ -16,7 +16,6 @@ import { readJsonFile, writeJsonFile, type BridgeConfig, type Logger } from "@co
 import { BridgeService, type BridgeServiceEvent } from "../service/bridge-service";
 import {
   createArchivedThreadCard,
-  createAgentReplyCard,
   createCardTestCard,
   createDraftCard,
   createDraftImportCard,
@@ -676,20 +675,117 @@ function truncateReplyText(text: string): string {
   return `${normalized.slice(0, FEISHU_REPLY_MAX_CHARS - 16)}\n\n[truncated]`;
 }
 
-function shouldRenderReplyAsMarkdownCard(text: string): boolean {
+function splitReplyMarkdownForPost(text: string): string[] {
   const normalized = text.trim();
   if (!normalized) {
-    return false;
+    return [];
   }
 
-  return (
-    /```[\s\S]*```/.test(normalized) ||
-    /(^|\n)\s*#{1,6}\s+\S/.test(normalized) ||
-    /(^|\n)\s*(?:[-*+]\s+|\d+\.\s+)/.test(normalized) ||
-    /\*\*[^*\n]+\*\*/.test(normalized) ||
-    /`[^`\n]+`/.test(normalized) ||
-    /(^|\n)\|.+\|/.test(normalized)
-  );
+  const closeFenceSuffix = "\n```";
+  const chunks: string[] = [];
+  let remaining = normalized;
+  let openFenceHeader: string | null = null;
+
+  const codePointLength = (value: string): number => Array.from(value).length;
+  const detectOpenFence = (value: string, initialFenceHeader: string | null): string | null => {
+    let nextFenceHeader = initialFenceHeader;
+    for (const line of value.split("\n")) {
+      const trimmedStart = line.trimStart();
+      if (!trimmedStart.startsWith("```")) {
+        continue;
+      }
+
+      if (nextFenceHeader) {
+        nextFenceHeader = null;
+        continue;
+      }
+
+      nextFenceHeader = trimmedStart;
+    }
+    return nextFenceHeader;
+  };
+  const splitAtReplyBoundary = (value: string, maxCodePoints: number): { head: string; tail: string } => {
+    const candidate = Array.from(value).slice(0, maxCodePoints).join("");
+    let splitAt = candidate.lastIndexOf("\n\n");
+    let head = candidate;
+    let tail = value.slice(candidate.length);
+
+    if (splitAt >= candidate.length / 2) {
+      const rawHead = candidate.slice(0, splitAt);
+      head = rawHead.replace(/\n+$/u, "");
+      tail = value.slice(rawHead.length).replace(/^\n+/u, "");
+    } else {
+      splitAt = candidate.lastIndexOf("\n");
+      if (splitAt >= candidate.length / 2) {
+        const rawHead = candidate.slice(0, splitAt);
+        head = rawHead.replace(/\n+$/u, "");
+        tail = value.slice(rawHead.length).replace(/^\n+/u, "");
+      }
+    }
+
+    if (!head) {
+      head = candidate || Array.from(value).slice(0, 1).join("");
+      tail = value.slice(head.length);
+    }
+
+    return { head, tail };
+  };
+
+  while (remaining) {
+    const reopenFencePrefix = openFenceHeader ? `${openFenceHeader}\n` : "";
+    const prefixBudget = codePointLength(reopenFencePrefix);
+    const remainingFenceHeader = detectOpenFence(remaining, openFenceHeader);
+    const finalSuffixBudget = remainingFenceHeader ? codePointLength(closeFenceSuffix) : 0;
+    if (codePointLength(remaining) + prefixBudget + finalSuffixBudget <= FEISHU_REPLY_MAX_CHARS) {
+      chunks.push(`${reopenFencePrefix}${remaining}${remainingFenceHeader ? closeFenceSuffix : ""}`);
+      break;
+    }
+
+    let reservedSuffixBudget = 0;
+    let segment = "";
+    let tail = "";
+    let finalFenceHeader: string | null = openFenceHeader;
+
+    while (true) {
+      const availableCodePoints = Math.max(1, FEISHU_REPLY_MAX_CHARS - prefixBudget - reservedSuffixBudget);
+      const split = splitAtReplyBoundary(remaining, availableCodePoints);
+      segment = split.head;
+      tail = split.tail;
+      finalFenceHeader = detectOpenFence(segment, openFenceHeader);
+      const nextReservedSuffixBudget = finalFenceHeader ? codePointLength(closeFenceSuffix) : 0;
+      if (nextReservedSuffixBudget === reservedSuffixBudget) {
+        break;
+      }
+      reservedSuffixBudget = nextReservedSuffixBudget;
+    }
+
+    chunks.push(`${reopenFencePrefix}${segment}${finalFenceHeader ? closeFenceSuffix : ""}`);
+    remaining = tail;
+    openFenceHeader = finalFenceHeader;
+  }
+
+  return chunks;
+}
+
+function postLocaleKey(locale: string | undefined): "zh_cn" | "en_us" {
+  return locale?.toLowerCase().startsWith("zh") ? "zh_cn" : "en_us";
+}
+
+function buildPostReplyContent(text: string, locale: string | undefined): string {
+  const localeKey = postLocaleKey(locale);
+  return JSON.stringify({
+    [localeKey]: {
+      title: "",
+      content: [
+        [
+          {
+            tag: "md",
+            text,
+          },
+        ],
+      ],
+    },
+  });
 }
 
 function summarizeIncomingMessage(
@@ -997,7 +1093,7 @@ export class FeishuBridge {
     const syncedAgentReplies = this.extractAgentReplies(event, task);
     if (syncedAgentReplies.length > 0) {
       for (const syncedAgentReply of syncedAgentReplies) {
-        await this.replyToMessage(
+        await this.replyWithAgentMessage(
           task.feishuBinding.rootMessageId ?? task.feishuBinding.threadKey,
           syncedAgentReply,
         );
@@ -1716,8 +1812,21 @@ export class FeishuBridge {
         return;
       }
 
+      const previousTargetBinding = targetTask.feishuBinding;
       if (task && task.taskId !== targetTaskId) {
         await this.options.service.unbindFeishuThread(task.taskId);
+      }
+      if (
+        previousTargetBinding &&
+        (previousTargetBinding.chatId !== currentBinding.chatId ||
+          previousTargetBinding.threadKey !== currentBinding.threadKey ||
+          previousTargetBinding.rootMessageId !== currentBinding.rootMessageId)
+      ) {
+        await this.options.service.unbindFeishuThread(targetTaskId);
+        this.deleteArchivedThread(previousTargetBinding);
+        this.deleteThreadDraft(previousTargetBinding);
+        this.deleteThreadActivityCards(previousTargetBinding);
+        this.deleteThreadTaskCard(previousTargetBinding);
       }
 
       this.deleteArchivedThread(currentBinding);
@@ -3600,18 +3709,6 @@ export class FeishuBridge {
 
   private async replyToMessage(messageId: string, text: string): Promise<string> {
     const normalized = truncateReplyText(text);
-    if (shouldRenderReplyAsMarkdownCard(normalized)) {
-      return this.sendCardReply(
-        messageId,
-        createAgentReplyCard(
-          {
-            content: normalized,
-          },
-          { locale: this.options.config.feishuUiLanguage },
-        ),
-      );
-    }
-
     const response = await this.requestFeishu<FeishuSendMessageResponse>(
       `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reply`,
       {
@@ -3624,6 +3721,30 @@ export class FeishuBridge {
       },
     );
     return response.message_id;
+  }
+
+  private async replyWithAgentMessage(messageId: string, text: string): Promise<string> {
+    const chunks = splitReplyMarkdownForPost(text);
+    if (chunks.length === 0) {
+      return "";
+    }
+
+    let lastMessageId = "";
+    for (const chunk of chunks) {
+      const response = await this.requestFeishu<FeishuSendMessageResponse>(
+        `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reply`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            msg_type: "post",
+            reply_in_thread: true,
+            content: buildPostReplyContent(chunk, this.options.config.feishuUiLanguage),
+          }),
+        },
+      );
+      lastMessageId = response.message_id;
+    }
+    return lastMessageId;
   }
 
   private async requestFeishu<T>(pathname: string, init: RequestInit): Promise<T> {
