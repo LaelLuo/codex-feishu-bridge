@@ -201,7 +201,9 @@ export const EN_US_MESSAGES = {
   "feishu.bridge.importThreadNotFound": "No runtime thread was found for {threadId}.",
   "feishu.bridge.threadImportedAndBound":
     "Imported thread {threadId} and bound this Feishu thread to task {taskId}.",
+  "feishu.bridge.importingThreadOnHost": "Importing that host thread now. This card will update when it is ready.",
   "feishu.bridge.creatingTaskOnHost": "Creating the host task now. This card will update when it is ready.",
+  "feishu.bridge.renamingTaskOnHost": "Renaming the task now. This card will update when it is ready.",
   "feishu.bridge.forcedQueuedMessage": "Forced this queued Feishu message to run immediately.",
   "feishu.bridge.missingQueuedMessageId": "This activity card is missing its queued-message id.",
   "feishu.bridge.selectInspectionPrompt": "Select one of Task, Tasks, Health, Account, or Limits.",

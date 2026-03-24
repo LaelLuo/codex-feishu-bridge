@@ -658,7 +658,9 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(submitImportResult, undefined);
+      assert.ok(submitImportResult);
+      assert.equal(JSON.stringify(submitImportResult).includes("Import Existing Thread"), true);
+      assert.equal(JSON.stringify(submitImportResult).includes("Importing that host thread now"), true);
       await waitFor(
         () => harness.service.getTask(externalThread.id)?.feishuBinding?.threadKey === "omt_import_task",
         "imported task binding",
@@ -1000,7 +1002,9 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(submitImportResult, undefined);
+      assert.ok(submitImportResult);
+      assert.equal(JSON.stringify(submitImportResult).includes("Import Existing Thread"), true);
+      assert.equal(JSON.stringify(submitImportResult).includes("Importing that host thread now"), true);
       await waitFor(
         () =>
           harness.service.listTasks().some(
@@ -1875,7 +1879,9 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(submitRenameResult, undefined);
+      assert.ok(submitRenameResult);
+      assert.equal(JSON.stringify(submitRenameResult).includes("Rename Task:"), true);
+      assert.equal(JSON.stringify(submitRenameResult).includes("Renaming the task now"), true);
       await waitFor(
         () => harness.service.getTask(task.taskId)?.title === "Renamed from Feishu",
         "renamed task title",
@@ -1986,7 +1992,9 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         },
       });
 
-      assert.equal(submitRenameResult, undefined);
+      assert.ok(submitRenameResult);
+      assert.equal(JSON.stringify(submitRenameResult).includes("Rename Task:"), true);
+      assert.equal(JSON.stringify(submitRenameResult).includes("Renaming the task now"), true);
       await waitFor(
         () => harness.service.getTask(task.taskId)?.title === "Renamed from mobile submit",
         "renamed task title from mobile submit",

@@ -956,23 +956,7 @@ export class FeishuBridge {
         event_type?: string;
         token?: string;
       };
-      event?: {
-        sender?: {
-          sender_id?: {
-            open_id?: string;
-            union_id?: string;
-            user_id?: string;
-          };
-        };
-        message?: {
-          message_id?: string;
-          root_id?: string;
-          parent_id?: string;
-          chat_id?: string;
-          message_type?: string;
-          content?: string;
-        };
-      };
+      event?: unknown;
     };
 
     if (body.challenge || body.type === "url_verification") {
@@ -1000,7 +984,38 @@ export class FeishuBridge {
     }
 
     if (body.header?.event_type === "im.message.receive_v1") {
-      await this.handleIncomingMessage(body.event?.message, body.event?.sender);
+      const messageEvent = body.event as
+        | {
+            sender?: {
+              sender_id?: {
+                open_id?: string;
+                union_id?: string;
+                user_id?: string;
+              };
+            };
+            message?: {
+              message_id?: string;
+              root_id?: string;
+              parent_id?: string;
+              chat_id?: string;
+              message_type?: string;
+              content?: string;
+            };
+          }
+        | undefined;
+      await this.handleIncomingMessage(messageEvent?.message, messageEvent?.sender);
+    }
+
+    if (body.header?.event_type === "card.action.trigger") {
+      const nextCard = await this.handleCardAction(body.event as FeishuCardActionEvent | undefined);
+      if (eventId) {
+        this.processedEventIds.add(eventId);
+        await this.persistState();
+      }
+      return {
+        statusCode: 200,
+        body: nextCard ?? {},
+      };
     }
 
     if (eventId) {
@@ -2228,6 +2243,24 @@ export class FeishuBridge {
     return this.buildTaskControlCard(task, binding, currentCard?.revision ?? 0, note ?? currentCard?.note);
   }
 
+  private async buildTaskRenameResponseCard(params: {
+    task: BridgeTask;
+    binding: FeishuThreadBinding;
+    note?: string;
+  }): Promise<FeishuInteractiveCard> {
+    const { task, binding, note } = params;
+    const currentCard = this.getThreadTaskCard(binding);
+    return createTaskRenameCard(
+      {
+        task,
+        binding,
+        revision: (currentCard?.revision ?? 0) + 1,
+        note,
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
+  }
+
   private async renderTaskControlCard(params: {
     task: BridgeTask;
     binding: FeishuThreadBinding;
@@ -3045,77 +3078,90 @@ export class FeishuBridge {
               note: this.t("feishu.bridge.emptyThreadIdBeforeSubmitting"),
             });
             await this.saveThreadDraft(draft);
-            return;
+            return this.buildDraftImportResponseCard({
+              binding,
+              draft,
+              note: this.t("feishu.bridge.emptyThreadIdBeforeSubmitting"),
+            });
           }
 
-          let importedTask: BridgeTask;
-          try {
-            [importedTask] = await this.options.service.importThreads(submittedThreadId);
-            if (!importedTask) {
-              throw new Error(this.t("feishu.bridge.importThreadNotFound", { threadId: submittedThreadId }));
+          const pendingImportNote = this.t("feishu.bridge.importingThreadOnHost");
+          this.runCardActionFollowUp("draft.import.submit", async () => {
+            let importedTask: BridgeTask;
+            try {
+              [importedTask] = await this.options.service.importThreads(submittedThreadId);
+              if (!importedTask) {
+                throw new Error(this.t("feishu.bridge.importThreadNotFound", { threadId: submittedThreadId }));
+              }
+            } catch (error) {
+              draft.importCardMessageId = await this.patchDraftImportCard({
+                binding,
+                draft,
+                messageId: importCardMessageId,
+                note: error instanceof Error ? error.message : String(error),
+                defaultThreadId: submittedThreadId,
+              });
+              await this.saveThreadDraft(draft);
+              return;
             }
-          } catch (error) {
-            draft.importCardMessageId = await this.patchDraftImportCard({
+
+            try {
+              this.deleteArchivedThread(binding);
+              await this.options.service.bindFeishuThread(importedTask.taskId, binding);
+            } catch (error) {
+              draft.importCardMessageId = await this.patchDraftImportCard({
+                binding,
+                draft,
+                messageId: importCardMessageId,
+                note: error instanceof Error ? error.message : String(error),
+                defaultThreadId: submittedThreadId,
+              });
+              await this.saveThreadDraft(draft);
+              return;
+            }
+
+            this.deleteThreadDraft(binding);
+
+            const boundTask = this.options.service.getTask(importedTask.taskId) ?? importedTask;
+            const importedTaskNote = this.t("feishu.bridge.threadImportedAndBound", {
+              threadId: submittedThreadId,
+              taskId: boundTask.taskId,
+            });
+
+            if (importCardMessageId) {
+              await this.saveThreadTaskCard({
+                chatId: binding.chatId,
+                threadKey: binding.threadKey,
+                rootMessageId: binding.rootMessageId,
+                taskId: boundTask.taskId,
+                messageId: importCardMessageId,
+                revision: 0,
+                note: importedTaskNote,
+              });
+            }
+
+            await this.patchDraftImportCard({
               binding,
               draft,
               messageId: importCardMessageId,
-              note: error instanceof Error ? error.message : String(error),
+              note: importedTaskNote,
               defaultThreadId: submittedThreadId,
             });
-            await this.saveThreadDraft(draft);
-            return;
-          }
 
-          try {
-            this.deleteArchivedThread(binding);
-            await this.options.service.bindFeishuThread(importedTask.taskId, binding);
-          } catch (error) {
-            draft.importCardMessageId = await this.patchDraftImportCard({
+            await this.renderTaskControlCard({
+              task: boundTask,
               binding,
-              draft,
-              messageId: importCardMessageId,
-              note: error instanceof Error ? error.message : String(error),
-              defaultThreadId: submittedThreadId,
+              note: importedTaskNote,
+              ...(draft.cardMessageId ? {} : { forceReply: true }),
             });
-            await this.saveThreadDraft(draft);
-            return;
-          }
-
-          this.deleteThreadDraft(binding);
-
-          const boundTask = this.options.service.getTask(importedTask.taskId) ?? importedTask;
-          const importedTaskNote = this.t("feishu.bridge.threadImportedAndBound", {
-            threadId: submittedThreadId,
-            taskId: boundTask.taskId,
           });
 
-          if (importCardMessageId) {
-            await this.saveThreadTaskCard({
-              chatId: binding.chatId,
-              threadKey: binding.threadKey,
-              rootMessageId: binding.rootMessageId,
-              taskId: boundTask.taskId,
-              messageId: importCardMessageId,
-              revision: 0,
-              note: importedTaskNote,
-            });
-          }
-
-          await this.patchDraftImportCard({
+          return this.buildDraftImportResponseCard({
             binding,
             draft,
-            messageId: importCardMessageId,
-            note: importedTaskNote,
+            note: pendingImportNote,
             defaultThreadId: submittedThreadId,
           });
-
-          await this.renderTaskControlCard({
-            task: boundTask,
-            binding,
-            note: importedTaskNote,
-            ...(draft.cardMessageId ? {} : { forceReply: true }),
-          });
-          return;
         }
         case "draft.create": {
           const pendingCreateNote = this.t("feishu.bridge.creatingTaskOnHost");
@@ -3380,25 +3426,51 @@ export class FeishuBridge {
               renameCardMessageId: resolvedRenameCardMessageId,
             });
           }
-          return;
-        }
-        const renamedTask = await this.options.service.renameTask(task.taskId, {
-          title: submittedTitle,
-          source: "feishu",
-        });
-        const resolvedRenameCardMessageId = await this.patchTaskRenameCard({
-          task: renamedTask,
-          binding,
-          messageId: renameCardMessageId,
-          note: this.t("feishu.bridge.taskRenamedTo", { title: renamedTask.title }),
-        });
-        if (currentCard && resolvedRenameCardMessageId !== currentCard.renameCardMessageId) {
-          await this.saveThreadTaskCard({
-            ...currentCard,
-            renameCardMessageId: resolvedRenameCardMessageId,
+          return this.buildTaskRenameResponseCard({
+            task,
+            binding,
+            note: this.t("feishu.bridge.emptyTitleBeforeSubmitting"),
           });
         }
-        return;
+        this.runCardActionFollowUp("task.rename.submit", async () => {
+          try {
+            const renamedTask = await this.options.service.renameTask(task.taskId, {
+              title: submittedTitle,
+              source: "feishu",
+            });
+            const resolvedRenameCardMessageId = await this.patchTaskRenameCard({
+              task: renamedTask,
+              binding,
+              messageId: renameCardMessageId,
+              note: this.t("feishu.bridge.taskRenamedTo", { title: renamedTask.title }),
+            });
+            if (currentCard && resolvedRenameCardMessageId !== currentCard.renameCardMessageId) {
+              await this.saveThreadTaskCard({
+                ...currentCard,
+                renameCardMessageId: resolvedRenameCardMessageId,
+              });
+            }
+          } catch (error) {
+            const errorNote = error instanceof Error ? error.message : String(error);
+            const resolvedRenameCardMessageId = await this.patchTaskRenameCard({
+              task,
+              binding,
+              messageId: renameCardMessageId,
+              note: errorNote,
+            });
+            if (currentCard && resolvedRenameCardMessageId !== currentCard.renameCardMessageId) {
+              await this.saveThreadTaskCard({
+                ...currentCard,
+                renameCardMessageId: resolvedRenameCardMessageId,
+              });
+            }
+          }
+        });
+        return this.buildTaskRenameResponseCard({
+          task,
+          binding,
+          note: this.t("feishu.bridge.renamingTaskOnHost"),
+        });
       }
       case "task.status":
         this.runCardActionFollowUp("task.status", async () => {

@@ -61,10 +61,11 @@
 - 负责移动端对话、审批和控制命令
 - 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
 - 未绑定线程的 draft card 直接提供独立的 `Import Existing Thread` 入口；点击后会打开一张独立导入表单卡，可输入现有 `threadId`，把宿主机上已有的 Codex 会话直接导入并绑定到当前飞书话题
+- `Import Existing Thread` 与 `Rename Task` 的提交动作会先同步返回“处理中”卡片，随后再在后台完成 import / bind / rename 与最终卡片 patch，避免 Feishu 先弹交互超时
 - Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex
 - 私聊可以直接发送普通 `text`；群聊应在话题模式里 `@` 机器人，Feishu 常会把这类消息投递为 `post` 富文本，bridge 会先提取可见正文再继续按文本消息路由
 - 已绑定任务卡提供 `Rename Task`、`Archive Task`、`Unbind Thread` 和 `More` 查询入口
-- `Rename Task` 会先下发一张独立的重命名卡；提交后会更新共享 task 标题，并同步回 VSCode monitor 与 Feishu 主任务卡
+- `Rename Task` 会先下发一张独立的重命名卡；提交时先同步返回处理中状态，再更新共享 task 标题，并同步回 VSCode monitor 与 Feishu 主任务卡
 - 任意一条 Feishu 文本、图片、文件消息都会立即回一张独立的 `Task Activity` 卡，说明这条消息是直接开始 turn、注入当前 turn、还是排队到下一轮
 - 普通 Codex/agent 回复默认使用 Feishu `post + md` 富文本发送；标题、列表、代码块等 Markdown 内容优先按原样渲染，而不是再退回 interactive card
 - 超长 agent 回复会按安全字符边界拆成多条连续 post；bridge 自己的 slash/status/help/错误文本回执仍保留普通 `text`
@@ -125,6 +126,7 @@
 - `/tasks/:id/feishu/topic`
 - `/tasks/import`
 - `/feishu/webhook`
+- `/feishu/webhook` 同时承接 `im.message.receive_v1` 与 `card.action.trigger`；后者会直接复用 `handleCardAction`，把同步 card payload 回给 Feishu
 
 ### Daemon WebSocket
 

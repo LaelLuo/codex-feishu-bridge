@@ -25,3 +25,7 @@
 - 2026-03-22T14:04:03+08:00 [agent] 已验证 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts apps/bridge-daemon/tests/feishu-cards.test.ts apps/bridge-daemon/tests/bridge-service-status.test.ts` 与 `bun run typecheck:daemon` 通过；`bun run test:daemon` 仍包含仓库既有的 Bun/node:test 兼容报错，不是本轮引入。
 - 2026-03-23T23:55:07+08:00 [agent] 根据后续 review 结果，对齐 `docs/architecture.md` 与当前真实实现：未绑定 draft card 的“导入已有线程”入口已不再表述为 `More -> Import Existing Thread`，而是改为主卡上的独立导入入口，避免架构文档继续误导后续 agent / 人类按旧流程理解交互路径。
 - 2026-03-23T16:34:32.966Z [agent] 已将 imported/manual-import 任务的 sandbox 恢复/投影缺口拆分为独立 bug task，避免继续混在渐进式交互主任务中追踪。
+- 2026-03-24T06:25:13.136Z [agent] 已将“飞书点击导入并绑定后无可见反馈”的问题拆分为独立 bug task `TASK-1774333513136-修复飞书导入并绑定失败时缺少可见反馈`，避免继续混在渐进式交互主任务中追踪。
+- 2026-03-24T07:58:00.000Z [agent] 按用户要求派 reviewer 全量审查即时响应契约，结论是：`/feishu/webhook` 未处理 `card.action.trigger`，且 `draft.import.submit` / `task.rename.submit` 仍会在成功后返回 `undefined`，属于高优先级缺口。
+- 2026-03-24T07:58:00.000Z [agent] 已先完成高优先级修补：webhook 模式现在会把 `card.action.trigger` 交给 `handleCardAction` 并回传同步 card payload；`draft.import.submit` 与 `task.rename.submit` 改为先同步返回“处理中”卡片，再在后台完成 import/bind/rename 与后续 patch。
+- 2026-03-24T07:58:00.000Z [agent] 已新增 / 调整回归测试，覆盖 webhook card action 同步响应、import submit 同步响应、rename submit 同步响应，并通过 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts` 与 `bun run typecheck:daemon` 验证。

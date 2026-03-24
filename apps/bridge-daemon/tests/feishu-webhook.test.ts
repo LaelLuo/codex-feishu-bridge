@@ -16,6 +16,7 @@ interface RequestRecord {
   method: string;
   url: string;
   body?: string;
+  responseMessageId?: string;
 }
 
 interface FeishuTestHarness {
@@ -172,7 +173,8 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
           ? undefined
           : String(init.body);
     calls.push(`${method} ${url}`);
-    requests.push({ method, url, body });
+    const requestRecord: RequestRecord = { method, url, body };
+    requests.push(requestRecord);
 
     if (!url.startsWith("https://open.feishu.cn")) {
       return originalFetch(input, init);
@@ -185,13 +187,15 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
     }
 
     if (url.includes("/open-apis/im/v1/messages/")) {
-      return new Response(JSON.stringify({ code: 0, data: { message_id: `om_reply_${requests.length}` } }), {
+      requestRecord.responseMessageId = `om_reply_${requests.length}`;
+      return new Response(JSON.stringify({ code: 0, data: { message_id: requestRecord.responseMessageId } }), {
         status: 200,
       });
     }
 
     if (url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")) {
-      return new Response(JSON.stringify({ code: 0, data: { message_id: `om_root_${requests.length}` } }), {
+      requestRecord.responseMessageId = `om_root_${requests.length}`;
+      return new Response(JSON.stringify({ code: 0, data: { message_id: requestRecord.responseMessageId } }), {
         status: 200,
       });
     }
@@ -408,6 +412,49 @@ describe("feishu bridge", { concurrency: 1 }, () => {
           "follow-up final reply",
         );
       }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("returns an interactive payload for webhook card.action.trigger events", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Webhook action task",
+      });
+      await harness.service.bindFeishuThread(task.taskId, {
+        chatId: "oc_chat_id",
+        threadKey: "omt_webhook_action",
+        rootMessageId: "om_root_webhook_action",
+      });
+
+      const actionResponse = await postWebhook(harness, {
+        header: {
+          event_id: "evt_webhook_status",
+          event_type: "card.action.trigger",
+          token: "verify-token",
+        },
+        event: {
+          open_message_id: "om_task_webhook_action",
+          open_id: "ou_webhook_task",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.status",
+              chatId: "oc_chat_id",
+              threadKey: "omt_webhook_action",
+              rootMessageId: "om_root_webhook_action",
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        },
+      });
+
+      assert.equal(actionResponse.status, 200);
+      assert.equal(JSON.stringify(actionResponse.body).includes("Task: Webhook action task"), true);
     } finally {
       await harness.cleanup();
     }
