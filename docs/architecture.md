@@ -62,6 +62,7 @@
 - 未绑定线程先进入 draft card；draft 与已绑定任务卡都可设置 `model`、`effort`、`planMode`
 - 未绑定线程的 draft card 直接提供独立的 `Import Existing Thread` 入口；点击后会打开一张独立导入表单卡，可输入现有 `threadId`，把宿主机上已有的 Codex 会话直接导入并绑定到当前飞书话题
 - `Import Existing Thread` 与 `Rename Task` 的提交动作会先同步返回“处理中”卡片，随后再在后台完成 import / bind / rename 与最终卡片 patch，避免 Feishu 先弹交互超时
+- `Import Existing Thread` 如果后台导入或绑定失败，会同时保留导入表单上的内联错误，并额外发送一条独立失败回执，避免用户只看到旧卡片静默停留
 - Feishu 的文本、图片、文件消息都可以进入同一个 task；图片走原生图像输入，文件作为本地路径附件交给 Codex
 - 私聊可以直接发送普通 `text`；群聊应在话题模式里 `@` 机器人，Feishu 常会把这类消息投递为 `post` 富文本，bridge 会先提取可见正文再继续按文本消息路由
 - 已绑定任务卡提供 `Rename Task`、`Archive Task`、`Unbind Thread` 和 `More` 查询入口

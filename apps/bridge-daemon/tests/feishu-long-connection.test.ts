@@ -798,6 +798,16 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
           ),
         "binding conflict shown on second import form",
       );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_root_import_second/reply") &&
+              parseMessageText(request).includes("already bound to a different Feishu thread"),
+          ),
+        "binding conflict receipt reply after second import",
+      );
 
       assert.deepEqual(harness.service.getTask(externalThread.id)?.feishuBinding, {
         chatId: "oc_chat_id",
@@ -805,6 +815,93 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         rootMessageId: "om_root_import_first",
       });
       assert.ok(secondDraftEntries.get("oc_chat_id:omt_import_second"));
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("replies with a visible failure receipt when import thread id is invalid", async () => {
+    const harness = await createHarness();
+
+    try {
+      await harness.onMessage(
+        {
+          message_id: "om_plain_import_missing",
+          thread_id: "omt_import_missing",
+          root_id: "om_root_import_missing",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "import an unknown host thread" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_import_missing",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
+        "draft card reply before invalid import submit",
+      );
+
+      const draftEntries = (
+        harness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string }> }
+      ).threadDrafts;
+      const draftCard = draftEntries.get("oc_chat_id:omt_import_missing");
+      assert.ok(draftCard?.cardMessageId);
+
+      const missingThreadId = "thr_import_missing_visible_receipt";
+      const importError = new Error(`No runtime thread was found for ${missingThreadId}.`);
+      const originalImportThreads = harness.service.importThreads.bind(harness.service);
+      harness.service.importThreads = (async (threadId?: string) => {
+        if (threadId === missingThreadId) {
+          throw importError;
+        }
+        return originalImportThreads(threadId);
+      }) as typeof harness.service.importThreads;
+
+      const submitImportResult = await harness.onCardAction({
+        open_message_id: draftCard.cardMessageId,
+        open_id: "ou_import_missing",
+        action: {
+          tag: "button",
+          form_value: {
+            thread_id_input: missingThreadId,
+          },
+          value: {
+            kind: "draft.import.submit",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_missing",
+            rootMessageId: "om_root_import_missing",
+            revision: 1,
+          },
+        },
+      });
+
+      assert.ok(submitImportResult);
+      assert.equal(JSON.stringify(submitImportResult).includes("Importing that host thread now"), true);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${draftCard.cardMessageId}`) &&
+              requestContainsCardTitle(request, "Import Existing Thread") &&
+              requestContainsCardText(request, importError.message),
+          ),
+        "invalid import error shown on import form",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_root_import_missing/reply") &&
+              parseMessageText(request).includes(importError.message),
+          ),
+        "invalid import visible failure receipt reply",
+      );
     } finally {
       await harness.cleanup();
     }

@@ -2200,6 +2200,27 @@ export class FeishuBridge {
     return messageId;
   }
 
+  private async replyWithDraftImportFailureReceipt(params: {
+    binding: FeishuThreadBinding;
+    draft: FeishuThreadDraft;
+    messageId?: string;
+    note: string;
+  }): Promise<void> {
+    const { binding, draft, messageId, note } = params;
+    const replyTargetId = binding.rootMessageId ?? messageId ?? draft.importCardMessageId ?? draft.cardMessageId;
+    if (!replyTargetId) {
+      this.options.logger.info("skipping feishu draft import failure receipt because no reply target exists", {
+        threadKey: binding.threadKey,
+        rootMessageId: binding.rootMessageId,
+        draftCardMessageId: draft.cardMessageId,
+        importCardMessageId: draft.importCardMessageId,
+      });
+      return;
+    }
+
+    await this.replyToMessage(replyTargetId, note);
+  }
+
   private runCardActionFollowUp(label: string, action: () => Promise<void>): void {
     void action().catch((error) => {
       this.options.logger.warn(`failed to complete feishu card action follow-up: ${label}`, error);
@@ -3114,12 +3135,19 @@ export class FeishuBridge {
                 throw new Error(this.t("feishu.bridge.importThreadNotFound", { threadId: submittedThreadId }));
               }
             } catch (error) {
+              const errorNote = error instanceof Error ? error.message : String(error);
               draft.importCardMessageId = await this.patchDraftImportCard({
                 binding,
                 draft,
                 messageId: importCardMessageId,
-                note: error instanceof Error ? error.message : String(error),
+                note: errorNote,
                 defaultThreadId: submittedThreadId,
+              });
+              await this.replyWithDraftImportFailureReceipt({
+                binding,
+                draft,
+                messageId: draft.importCardMessageId,
+                note: errorNote,
               });
               await this.saveThreadDraft(draft);
               return;
@@ -3129,12 +3157,19 @@ export class FeishuBridge {
               this.deleteArchivedThread(binding);
               await this.options.service.bindFeishuThread(importedTask.taskId, binding);
             } catch (error) {
+              const errorNote = error instanceof Error ? error.message : String(error);
               draft.importCardMessageId = await this.patchDraftImportCard({
                 binding,
                 draft,
                 messageId: importCardMessageId,
-                note: error instanceof Error ? error.message : String(error),
+                note: errorNote,
                 defaultThreadId: submittedThreadId,
+              });
+              await this.replyWithDraftImportFailureReceipt({
+                binding,
+                draft,
+                messageId: draft.importCardMessageId,
+                note: errorNote,
               });
               await this.saveThreadDraft(draft);
               return;

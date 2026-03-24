@@ -3,7 +3,7 @@ title: 修复飞书导入并绑定失败时缺少可见反馈
 status: in_progress
 archived: false
 created_at: '2026-03-24T06:25:13.136Z'
-updated_at: '2026-03-24T07:58:00.000Z'
+updated_at: '2026-03-24T09:48:00.000Z'
 related_repos:
   - F:\Projects\NodeProjects\codex-feishu-bridge
 depends_on: []
