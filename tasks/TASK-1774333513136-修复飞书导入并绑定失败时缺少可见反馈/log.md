@@ -11,3 +11,4 @@
 - 2026-03-24T09:40:00.000Z [agent] 先补回归测试再落实现：新增无效 threadId 的显式失败回执断言，并扩展重复导入冲突场景，要求绑定冲突时同样发送独立错误回执；随后在 bridge 里补上失败回执 helper，把 import 失败和 bind 失败两个分支都接到独立 reply。
 - 2026-03-24T09:48:00.000Z [agent] 已重新通过 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`（35 pass）、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts`（7 pass）与 `bun run typecheck:daemon`。
 - 2026-03-24T09:48:00.000Z [agent] reviewer 对本切片复核结论为 `no findings`；当前剩余风险仅是极少数情况下如果 root/import card target 同时缺失，就只能退回表单内联错误，不会再额外发独立失败回执。
+- 2026-03-24T10:52:21.836Z [agent] 任务状态更新为 done：已完成导入失败双通道可见反馈、回归测试与 reviewer 复核收口；当前剩余仅为极少数 target 同时缺失时退回表单内联错误的低频风险
