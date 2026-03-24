@@ -1,0 +1,11 @@
+id: TASK-1774035875103-补充飞书默认群与私聊群聊说明
+title: 补充飞书默认群与私聊群聊说明
+status: done
+archived: true
+created_at: '2026-03-20T19:44:35.103Z'
+updated_at: '2026-03-24T09:55:42.994Z'
+related_repos:
+  - F:\Projects\NodeProjects\codex-feishu-bridge
+depends_on: []
+blocked_by: []
+tags: []
