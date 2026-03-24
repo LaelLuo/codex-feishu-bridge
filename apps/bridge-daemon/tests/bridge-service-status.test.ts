@@ -7,7 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 
 import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bridge/shared";
-import type { ApprovalPolicy } from "@codex-feishu-bridge/protocol";
+import type { ApprovalPolicy, SandboxMode } from "@codex-feishu-bridge/protocol";
 
 import type {
   CodexAccountSnapshot,
@@ -33,6 +33,10 @@ async function waitFor(check: () => boolean, message: string): Promise<void> {
   }
 
   throw new Error(`Timed out waiting for ${message}`);
+}
+
+function isoOffsetFromNow(offsetMs: number): string {
+  return new Date(Date.now() + offsetMs).toISOString();
 }
 
 function writeThreadStateRow(
@@ -84,6 +88,7 @@ class FakeStatusRuntime implements CodexRuntime {
   private requiresResumeBeforeStartTurn = false;
   private readonly resumedThreadIds = new Set<string>();
   private lastStartTurnApprovalPolicy: ApprovalPolicy | undefined;
+  private lastStartTurnSandbox: SandboxMode | undefined;
   private startTurnCallCount = 0;
 
   async start(): Promise<void> {}
@@ -161,12 +166,14 @@ class FakeStatusRuntime implements CodexRuntime {
   async startTurn(params: {
     threadId: string;
     approvalPolicy?: ApprovalPolicy;
+    sandbox?: SandboxMode;
   }): Promise<CodexTurnDescriptor> {
     if (this.requiresResumeBeforeStartTurn && !this.resumedThreadIds.has(params.threadId)) {
       throw new Error(`thread not found: ${params.threadId}`);
     }
     this.startTurnCallCount += 1;
     this.lastStartTurnApprovalPolicy = params.approvalPolicy;
+    this.lastStartTurnSandbox = params.sandbox;
     return {
       id: "turn-1",
       threadId: params.threadId,
@@ -214,6 +221,10 @@ class FakeStatusRuntime implements CodexRuntime {
 
   getLastStartTurnApprovalPolicy(): ApprovalPolicy | undefined {
     return this.lastStartTurnApprovalPolicy;
+  }
+
+  getLastStartTurnSandbox(): SandboxMode | undefined {
+    return this.lastStartTurnSandbox;
   }
 
   getStartTurnCallCount(): number {
@@ -309,6 +320,45 @@ describe("bridge service runtime status mapping", () => {
     await runtime.dispose();
   });
 
+  it("restores sandbox mode from JSON sandbox_policy metadata for imported host threads", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-import-json-sandbox-test");
+    await prepareBridgeDirectories(config);
+
+    writeThreadStateRow(config, {
+      threadId: "thread-json-sandbox",
+      sandboxPolicy:
+        '{"type":"workspace-write","writable_roots":["C:\\\\Users\\\\LaelLuo\\\\.codex\\\\memories"],"network_access":true,"exclude_tmpdir_env_var":false,"exclude_slash_tmp":false}',
+      approvalMode: "never",
+    });
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-json-sandbox",
+        name: "Imported JSON sandbox thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: "2026-03-19T03:05:00.000Z",
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const imported = await service.importThreads("thread-json-sandbox");
+    assert.equal(imported.length, 1);
+    assert.equal(imported[0]?.executionProfile.sandbox, "workspace-write");
+    assert.equal(imported[0]?.executionProfile.approvalPolicy, "never");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
   it("uses the restored approval policy after binding an imported host thread to feishu", async () => {
     const namespace = randomUUID();
     const config = createTestBridgeConfig(namespace);
@@ -353,6 +403,7 @@ describe("bridge service runtime status mapping", () => {
       replyToFeishu: true,
     });
     assert.equal(runtime.getLastStartTurnApprovalPolicy(), "never");
+    assert.equal(runtime.getLastStartTurnSandbox(), "danger-full-access");
 
     await service.dispose();
     await runtime.dispose();
@@ -1281,6 +1332,9 @@ describe("bridge service runtime status mapping", () => {
     const logger = createConsoleLogger("bridge-service-bound-import-rollout-activity-test");
     await prepareBridgeDirectories(config);
 
+    const startedAt = isoOffsetFromNow(-5_000);
+    const followUpAt = isoOffsetFromNow(-4_000);
+    const liveFeishuAt = isoOffsetFromNow(-3_000);
     const rolloutRelativePath = "sessions/2026/03/19/rollout-bound-import-busy.jsonl";
     const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
     await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
@@ -1288,7 +1342,7 @@ describe("bridge service runtime status mapping", () => {
       rolloutDiskPath,
       [
         JSON.stringify({
-          timestamp: "2026-03-19T01:00:00.000Z",
+          timestamp: startedAt,
           type: "event_msg",
           payload: {
             type: "task_started",
@@ -1296,14 +1350,14 @@ describe("bridge service runtime status mapping", () => {
           },
         }),
         JSON.stringify({
-          timestamp: "2026-03-19T01:00:00.001Z",
+          timestamp: startedAt,
           type: "turn_context",
           payload: {
             turn_id: "turn-rollout-busy-1",
           },
         }),
         JSON.stringify({
-          timestamp: "2026-03-19T01:00:00.002Z",
+          timestamp: followUpAt,
           type: "event_msg",
           payload: {
             type: "user_message",
@@ -1325,7 +1379,7 @@ describe("bridge service runtime status mapping", () => {
         id: "thread-bound-busy",
         name: "Bound imported busy thread",
         cwd: TEST_REPO_ROOT,
-        updatedAt: "2026-03-19T01:00:00.000Z",
+        updatedAt: startedAt,
         status: {
           type: "notLoaded",
         },
@@ -1365,7 +1419,7 @@ describe("bridge service runtime status mapping", () => {
       author: "user",
       surface: "feishu",
       content: "Live follow-up from Feishu",
-      createdAt: "2026-03-19T01:00:10.000Z",
+      createdAt: liveFeishuAt,
     });
 
     const synced = await service.syncRuntimeThreads();
@@ -1384,6 +1438,8 @@ describe("bridge service runtime status mapping", () => {
     const logger = createConsoleLogger("bridge-service-imported-rollout-queue-test");
     await prepareBridgeDirectories(config);
 
+    const startedAt = isoOffsetFromNow(-5_000);
+    const userMessageAt = isoOffsetFromNow(-4_000);
     const rolloutRelativePath = "sessions/2026/03/19/rollout-import-queue-busy.jsonl";
     const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
     await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
@@ -1391,7 +1447,7 @@ describe("bridge service runtime status mapping", () => {
       rolloutDiskPath,
       [
         JSON.stringify({
-          timestamp: "2026-03-19T01:05:00.000Z",
+          timestamp: startedAt,
           type: "event_msg",
           payload: {
             type: "task_started",
@@ -1399,7 +1455,7 @@ describe("bridge service runtime status mapping", () => {
           },
         }),
         JSON.stringify({
-          timestamp: "2026-03-19T01:05:00.001Z",
+          timestamp: userMessageAt,
           type: "event_msg",
           payload: {
             type: "user_message",
@@ -1421,7 +1477,7 @@ describe("bridge service runtime status mapping", () => {
         id: "thread-rollout-queue",
         name: "Imported queue thread",
         cwd: TEST_REPO_ROOT,
-        updatedAt: "2026-03-19T01:05:00.000Z",
+        updatedAt: startedAt,
         status: {
           type: "notLoaded",
         },
@@ -1462,6 +1518,8 @@ describe("bridge service runtime status mapping", () => {
     const logger = createConsoleLogger("bridge-service-imported-rollout-stable-running-test");
     await prepareBridgeDirectories(config);
 
+    const startedAt = isoOffsetFromNow(-(2 * 60 * 60 * 1000));
+    const userMessageAt = isoOffsetFromNow(-4_000);
     const rolloutRelativePath = "sessions/2026/03/19/rollout-import-stable-running.jsonl";
     const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
     await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
@@ -1469,7 +1527,7 @@ describe("bridge service runtime status mapping", () => {
       rolloutDiskPath,
       [
         JSON.stringify({
-          timestamp: "2026-03-19T01:10:00.000Z",
+          timestamp: startedAt,
           type: "event_msg",
           payload: {
             type: "task_started",
@@ -1477,7 +1535,7 @@ describe("bridge service runtime status mapping", () => {
           },
         }),
         JSON.stringify({
-          timestamp: "2026-03-19T01:10:00.001Z",
+          timestamp: userMessageAt,
           type: "event_msg",
           payload: {
             type: "user_message",
@@ -1499,7 +1557,7 @@ describe("bridge service runtime status mapping", () => {
         id: "thread-rollout-stable",
         name: "Imported stable running thread",
         cwd: TEST_REPO_ROOT,
-        updatedAt: "2026-03-19T01:10:00.000Z",
+        updatedAt: startedAt,
         status: {
           type: "notLoaded",
         },
@@ -1527,6 +1585,260 @@ describe("bridge service runtime status mapping", () => {
     const secondTask = secondSync.find((task) => task.taskId === "thread-rollout-stable");
     assert.equal(secondTask?.status, "running");
     assert.equal(secondTask?.activeTurnId, "turn-rollout-stable-1");
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("keeps a bound imported task busy when runtime still reports running even if rollout activity is stale", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-imported-runtime-running-overrides-stale-rollout-test");
+    await prepareBridgeDirectories(config);
+
+    const staleStartedAt = isoOffsetFromNow(-(2 * 60 * 60 * 1000));
+    const rolloutRelativePath = "sessions/2026/03/19/rollout-import-runtime-running-stale.jsonl";
+    const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
+    await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
+    await writeFile(
+      rolloutDiskPath,
+      [
+        JSON.stringify({
+          timestamp: staleStartedAt,
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-rollout-runtime-running-1",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    writeThreadStateRow(config, {
+      threadId: "thread-rollout-runtime-running",
+      rolloutPath: `/codex-home/${rolloutRelativePath}`,
+    });
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-rollout-runtime-running",
+        name: "Imported runtime running thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: isoOffsetFromNow(-3_000),
+        status: {
+          type: "running",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    await service.importRecentRuntimeThreads(1);
+    await service.bindFeishuThread("thread-rollout-runtime-running", {
+      chatId: "oc_runtime_running_chat",
+      threadKey: "omt_runtime_running_thread",
+      rootMessageId: "om_runtime_running_root",
+    });
+
+    const synced = await service.syncRuntimeThreads();
+    const syncedTask = synced.find((task) => task.taskId === "thread-rollout-runtime-running");
+    assert.equal(syncedTask?.status, "running");
+
+    const queued = await service.sendMessage("thread-rollout-runtime-running", {
+      content: "Wait for the current imported turn to finish first",
+      source: "feishu",
+      replyToFeishu: true,
+      receiptId: "receipt-runtime-running-stale",
+    });
+    assert.equal(queued.status, "running");
+    assert.equal(queued.queuedMessageCount, 1);
+    assert.equal(runtime.getStartTurnCallCount(), 0);
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("does not keep a feishu-bound imported task running when rollout activity is stale", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-imported-rollout-stale-running-test");
+    await prepareBridgeDirectories(config);
+
+    const staleStartedAt = isoOffsetFromNow(-(2 * 60 * 60 * 1000));
+    const staleMessageAt = isoOffsetFromNow(-(2 * 60 * 60 * 1000) + 1_000);
+    const rolloutRelativePath = "sessions/2026/03/19/rollout-import-stale-running.jsonl";
+    const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
+    await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
+    await writeFile(
+      rolloutDiskPath,
+      [
+        JSON.stringify({
+          timestamp: staleStartedAt,
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-rollout-stale-1",
+          },
+        }),
+        JSON.stringify({
+          timestamp: staleMessageAt,
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "A very old imported turn used to be running",
+            local_images: [],
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    writeThreadStateRow(config, {
+      threadId: "thread-rollout-stale",
+      rolloutPath: `/codex-home/${rolloutRelativePath}`,
+    });
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-rollout-stale",
+        name: "Imported stale running thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: staleMessageAt,
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+
+    const imported = await service.importRecentRuntimeThreads(1);
+    assert.equal(imported.length, 1);
+    await service.bindFeishuThread("thread-rollout-stale", {
+      chatId: "oc_stale_chat",
+      threadKey: "omt_stale_thread",
+      rootMessageId: "om_stale_root",
+    });
+
+    const synced = await service.syncRuntimeThreads();
+    const syncedTask = synced.find((task) => task.taskId === "thread-rollout-stale");
+    assert.notEqual(syncedTask?.status, "running");
+    assert.equal(syncedTask?.activeTurnId ?? null, null);
+
+    const replied = await service.sendMessage("thread-rollout-stale", {
+      content: "Start a fresh turn on this imported thread",
+      source: "feishu",
+      replyToFeishu: true,
+      receiptId: "receipt-stale-running",
+    });
+
+    assert.equal(replied.queuedMessageCount, 0);
+    assert.equal(runtime.getStartTurnCallCount(), 1);
+
+    await service.dispose();
+    await runtime.dispose();
+  });
+
+  it("drains queued feishu messages after stale imported running activity is cleared by sync", async () => {
+    const namespace = randomUUID();
+    const config = createTestBridgeConfig(namespace);
+    const logger = createConsoleLogger("bridge-service-imported-rollout-stale-queue-drain-test");
+    await prepareBridgeDirectories(config);
+
+    const staleStartedAt = isoOffsetFromNow(-(2 * 60 * 60 * 1000));
+    const staleMessageAt = isoOffsetFromNow(-(2 * 60 * 60 * 1000) + 1_000);
+    const rolloutRelativePath = "sessions/2026/03/19/rollout-import-stale-queue-drain.jsonl";
+    const rolloutDiskPath = path.join(config.codexHome, rolloutRelativePath);
+    await mkdir(path.dirname(rolloutDiskPath), { recursive: true });
+    await writeFile(
+      rolloutDiskPath,
+      [
+        JSON.stringify({
+          timestamp: staleStartedAt,
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-rollout-stale-drain-1",
+          },
+        }),
+        JSON.stringify({
+          timestamp: staleMessageAt,
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "An old imported turn used to be running",
+            local_images: [],
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    writeThreadStateRow(config, {
+      threadId: "thread-rollout-stale-drain",
+      rolloutPath: `/codex-home/${rolloutRelativePath}`,
+    });
+
+    const runtime = new FakeStatusRuntime();
+    runtime.setThreads([
+      {
+        id: "thread-rollout-stale-drain",
+        name: "Imported stale drain thread",
+        cwd: TEST_REPO_ROOT,
+        updatedAt: staleMessageAt,
+        status: {
+          type: "notLoaded",
+        },
+      },
+    ]);
+    await runtime.start();
+
+    const service = new BridgeService({ config, logger, runtime });
+    await service.initialize();
+    await service.importRecentRuntimeThreads(1);
+    await service.bindFeishuThread("thread-rollout-stale-drain", {
+      chatId: "oc_stale_drain_chat",
+      threadKey: "omt_stale_drain_thread",
+      rootMessageId: "om_stale_drain_root",
+    });
+
+    const internals = service as unknown as {
+      tasks: Map<string, { status: string; activeTurnId?: string; queuedMessageCount: number }>;
+      queuedMessages: Map<
+        string,
+        Array<{
+          receiptId: string;
+          surface: "feishu" | "vscode" | "runtime";
+          replyToFeishu: boolean;
+          content: string;
+          assetIds: string[];
+        }>
+      >;
+    };
+    const internalTask = internals.tasks.get("thread-rollout-stale-drain");
+    assert.ok(internalTask);
+    internalTask.status = "running";
+    internalTask.activeTurnId = "turn-rollout-stale-drain-1";
+    internalTask.queuedMessageCount = 1;
+    internals.queuedMessages.set("thread-rollout-stale-drain", [
+      {
+        receiptId: "receipt-stale-drain",
+        surface: "feishu",
+        replyToFeishu: true,
+        content: "Run the queued message after stale activity is cleared",
+        assetIds: [],
+      },
+    ]);
+
+    const synced = await service.syncRuntimeThreads();
+    const syncedTask = synced.find((task) => task.taskId === "thread-rollout-stale-drain");
+    assert.ok(syncedTask);
+    assert.equal(runtime.getStartTurnCallCount(), 1);
+    assert.equal(service.getTask("thread-rollout-stale-drain")?.queuedMessageCount, 0);
 
     await service.dispose();
     await runtime.dispose();

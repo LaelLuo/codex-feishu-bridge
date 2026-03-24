@@ -49,6 +49,7 @@ import type {
 const SYSTEM_TASK_ID = "system";
 const ACTIVE_TURN_START_TIMEOUT_MS = 8_000;
 const ACTIVE_TURN_RETRY_INTERVAL_MS = 250;
+const IMPORTED_RUNNING_ACTIVITY_STALE_MS = 60 * 60 * 1000;
 const AGGREGATED_DIFF_PATH = "__aggregated_diff__";
 const AGENT_DIFF_SUMMARY = "Extracted from agent diff block";
 const MIRRORED_ROLLOUT_DUPLICATE_WINDOW_MS = 50;
@@ -199,8 +200,41 @@ function isSandboxMode(value: string | undefined): value is SandboxMode {
   return typeof value === "string" && SANDBOX_MODE_VALUES.includes(value as SandboxMode);
 }
 
+function parseSandboxModeFromStateValue(value: string | undefined): SandboxMode | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (isSandboxMode(value)) {
+    return value;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as { type?: unknown };
+    const sandboxType = typeof parsed.type === "string" ? parsed.type : undefined;
+    return isSandboxMode(sandboxType) ? sandboxType : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function isApprovalPolicy(value: string | undefined): value is ApprovalPolicy {
   return typeof value === "string" && APPROVAL_POLICY_VALUES.includes(value as ApprovalPolicy);
+}
+
+function shouldTreatImportedRolloutActivityAsRunning(activity: ImportedRolloutActivity | null | undefined): boolean {
+  if (!activity || activity.status !== "running") {
+    return false;
+  }
+  if (!activity.latestActivityAt) {
+    return true;
+  }
+
+  const latestActivityMs = Date.parse(activity.latestActivityAt);
+  if (!Number.isFinite(latestActivityMs)) {
+    return true;
+  }
+
+  return Date.now() - latestActivityMs <= IMPORTED_RUNNING_ACTIVITY_STALE_MS;
 }
 
 function normalizeExecutionProfile(profile: TaskExecutionProfile | undefined): TaskExecutionProfile {
@@ -735,6 +769,37 @@ function parseImportedRolloutActivity(record: Record<string, unknown>): Imported
   return null;
 }
 
+function applyImportedRolloutActivityRecord(
+  activity: ImportedRolloutActivity,
+  record: Record<string, unknown>,
+): ImportedRolloutActivity {
+  let activeTurnId = activity.activeTurnId;
+  let latestActivityAt = activity.latestActivityAt;
+  const activityUpdate = parseImportedRolloutActivity(record);
+
+  if (activityUpdate) {
+    latestActivityAt = activityUpdate.latestActivityAt ?? latestActivityAt;
+    if (activityUpdate.status === "running") {
+      activeTurnId = activityUpdate.activeTurnId;
+    } else if (!activityUpdate.activeTurnId || activityUpdate.activeTurnId === activeTurnId) {
+      activeTurnId = undefined;
+    }
+  }
+
+  // Imported rollout logs often keep appending tool/output records without
+  // repeating task_started, so treat any later record as fresh activity while
+  // the same turn is still considered active.
+  if (activeTurnId) {
+    latestActivityAt = rolloutTimestampFromRecord(record);
+  }
+
+  return {
+    status: activeTurnId ? "running" : "idle",
+    ...(activeTurnId ? { activeTurnId } : {}),
+    ...(latestActivityAt ? { latestActivityAt } : {}),
+  };
+}
+
 function parseRolloutConversationSeed(record: Record<string, unknown>, defaultSurface = "runtime" as MessageSurface): {
   message: RolloutConversationSeed | null;
   sessionSurface?: MessageSurface;
@@ -992,6 +1057,12 @@ export class BridgeService {
               : {}),
           });
         }
+        const queuedTaskIds = result.updates
+          .map((update) => update.task.taskId)
+          .filter((taskId, index, taskIds) => taskIds.indexOf(taskId) === index);
+        for (const taskId of queuedTaskIds) {
+          await this.processQueuedMessages(taskId);
+        }
       }
     } catch (error) {
       this.options.logger.warn("failed to sync runtime threads", error);
@@ -1203,6 +1274,7 @@ export class BridgeService {
         model: task.executionProfile.model,
         effort: task.executionProfile.effort,
         approvalPolicy: task.executionProfile.approvalPolicy,
+        sandbox: task.executionProfile.sandbox,
         planMode: task.executionProfile.planMode,
       });
       this.trackPendingTurnStart(turn.id);
@@ -2122,7 +2194,7 @@ export class BridgeService {
           }
         }
         if (
-          refreshResult.activity.status === "running" &&
+          shouldTreatImportedRolloutActivityAsRunning(refreshResult.activity) &&
           !isTaskBusyForQueuedFeishuMessage({
             status: nextStatus,
             activeTurnId: task.activeTurnId,
@@ -2151,15 +2223,16 @@ export class BridgeService {
       ) {
         importedRolloutActivity = await this.readImportedTaskActivityFromRollout(task);
       }
-      if (importedRolloutActivity?.status === "running") {
+      if (shouldTreatImportedRolloutActivityAsRunning(importedRolloutActivity)) {
+        const trustedActivity = importedRolloutActivity;
         nextStatus = "running";
-        if (importedRolloutActivity.activeTurnId && task.activeTurnId !== importedRolloutActivity.activeTurnId) {
-          task.activeTurnId = importedRolloutActivity.activeTurnId;
+        if (trustedActivity?.activeTurnId && task.activeTurnId !== trustedActivity.activeTurnId) {
+          task.activeTurnId = trustedActivity.activeTurnId;
           changed = true;
           taskChanged = true;
         }
-        if (importedRolloutActivity.latestActivityAt && effectiveUpdatedAt !== importedRolloutActivity.latestActivityAt) {
-          effectiveUpdatedAt = importedRolloutActivity.latestActivityAt;
+        if (trustedActivity?.latestActivityAt && effectiveUpdatedAt !== trustedActivity.latestActivityAt) {
+          effectiveUpdatedAt = trustedActivity.latestActivityAt;
           changed = true;
           taskChanged = true;
         }
@@ -2548,8 +2621,9 @@ export class BridgeService {
   ): Promise<RolloutConversationReadResult> {
     const messages: RolloutConversationSeed[] = [];
     let sessionSurface: MessageSurface | undefined;
-    let activeTurnId: string | undefined;
-    let latestActivityAt: string | undefined;
+    let activity: ImportedRolloutActivity = {
+      status: "idle",
+    };
     const stream = createReadStream(rolloutPath, { encoding: "utf8" });
     const lines = createInterface({
       input: stream,
@@ -2562,15 +2636,7 @@ export class BridgeService {
         if (!record) {
           continue;
         }
-        const activityUpdate = parseImportedRolloutActivity(record);
-        if (activityUpdate) {
-          latestActivityAt = activityUpdate.latestActivityAt ?? latestActivityAt;
-          if (activityUpdate.status === "running") {
-            activeTurnId = activityUpdate.activeTurnId;
-          } else if (!activityUpdate.activeTurnId || activityUpdate.activeTurnId === activeTurnId) {
-            activeTurnId = undefined;
-          }
-        }
+        activity = applyImportedRolloutActivityRecord(activity, record);
         const parsed = parseRolloutConversationSeed(record, sessionSurface ?? "runtime");
         if (parsed.sessionSurface) {
           sessionSurface = parsed.sessionSurface;
@@ -2592,11 +2658,7 @@ export class BridgeService {
     return {
       messages,
       taskOrigin: rolloutTaskOriginFromSurface(sessionSurface, task.mode),
-      activity: {
-        status: activeTurnId ? "running" : "idle",
-        ...(activeTurnId ? { activeTurnId } : {}),
-        ...(latestActivityAt ? { latestActivityAt } : {}),
-      },
+      activity,
     };
   }
 
@@ -2615,8 +2677,9 @@ export class BridgeService {
       input: stream,
       crlfDelay: Infinity,
     });
-    let activeTurnId: string | undefined;
-    let latestActivityAt: string | undefined;
+    let activity: ImportedRolloutActivity = {
+      status: "idle",
+    };
 
     try {
       for await (const line of lines) {
@@ -2624,48 +2687,36 @@ export class BridgeService {
         if (!record) {
           continue;
         }
-        const activityUpdate = parseImportedRolloutActivity(record);
-        if (!activityUpdate) {
-          continue;
-        }
-        latestActivityAt = activityUpdate.latestActivityAt ?? latestActivityAt;
-        if (activityUpdate.status === "running") {
-          activeTurnId = activityUpdate.activeTurnId;
-        } else if (!activityUpdate.activeTurnId || activityUpdate.activeTurnId === activeTurnId) {
-          activeTurnId = undefined;
-        }
+        activity = applyImportedRolloutActivityRecord(activity, record);
       }
     } finally {
       lines.close();
       stream.close();
     }
 
-    return {
-      status: activeTurnId ? "running" : "idle",
-      ...(activeTurnId ? { activeTurnId } : {}),
-      ...(latestActivityAt ? { latestActivityAt } : {}),
-    };
+    return activity;
   }
 
   private promoteImportedTaskBusyState(
     task: BridgeTask,
     activity: ImportedRolloutActivity | null | undefined,
   ): boolean {
-    if (!activity || activity.status !== "running") {
+    if (!shouldTreatImportedRolloutActivityAsRunning(activity)) {
       return false;
     }
 
+    const trustedActivity = activity;
     let changed = false;
     if (!isTaskBusyForQueuedFeishuMessage(task)) {
       task.status = "running";
       changed = true;
     }
-    if (activity.activeTurnId && task.activeTurnId !== activity.activeTurnId) {
-      task.activeTurnId = activity.activeTurnId;
+    if (trustedActivity?.activeTurnId && task.activeTurnId !== trustedActivity.activeTurnId) {
+      task.activeTurnId = trustedActivity.activeTurnId;
       changed = true;
     }
-    if (activity.latestActivityAt && task.updatedAt !== activity.latestActivityAt) {
-      this.touchTask(task, activity.latestActivityAt);
+    if (trustedActivity?.latestActivityAt && task.updatedAt !== trustedActivity.latestActivityAt) {
+      this.touchTask(task, trustedActivity.latestActivityAt);
       changed = true;
     }
     return changed;
@@ -2724,8 +2775,9 @@ export class BridgeService {
         sandbox_policy?: string;
         approval_mode?: string;
       };
+      const sandbox = parseSandboxModeFromStateValue(parsed.sandbox_policy);
       return normalizeExecutionProfile({
-        ...(isSandboxMode(parsed.sandbox_policy) ? { sandbox: parsed.sandbox_policy } : {}),
+        ...(sandbox ? { sandbox } : {}),
         ...(isApprovalPolicy(parsed.approval_mode) ? { approvalPolicy: parsed.approval_mode } : {}),
       });
     } catch (error) {
