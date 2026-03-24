@@ -6,6 +6,7 @@ import { createBridgeTask, type FeishuThreadBinding } from "@codex-feishu-bridge
 import {
   createArchivedThreadCard,
   createDraftCard,
+  createDraftImportCard,
   createTaskActivityCard,
   createTaskControlCard,
   createTaskInspectionSnapshotCard,
@@ -18,6 +19,12 @@ const BINDING: FeishuThreadBinding = {
   threadKey: "omt_thread",
   rootMessageId: "om_root",
 };
+
+function firstFormElement(card: { elements?: Array<Record<string, unknown>> }): Record<string, unknown> {
+  const formElement = (card.elements ?? []).find((element) => element.tag === "form");
+  assert.ok(formElement);
+  return formElement;
+}
 
 describe("feishu card builders", () => {
   it("serializes draft-card select menus with visible option lists", () => {
@@ -276,12 +283,49 @@ describe("feishu card builders", () => {
     });
 
     const json = JSON.stringify(renameCard);
+    const formElement = firstFormElement(renameCard);
+    const formChildren = (formElement.elements ?? []) as Array<Record<string, unknown>>;
     assert.match(json, /Rename Task: Original title/);
     assert.match(json, /Renames the shared bridge task in both VSCode and Feishu/);
+    assert.match(json, /"tag":"form"/);
+    assert.match(json, /"name":"task_rename_form"/);
     assert.match(json, /task_title_input/);
+    assert.match(json, /task_title_submit/);
     assert.match(json, /Apply New Title/);
-    assert.match(json, /form_submit/);
+    assert.match(json, /"action_type":"form_submit"/);
     assert.match(json, /Rename submitted from VSCode\./);
+    assert.match(json, /"tag":"input"/);
+    assert.deepEqual(
+      formChildren.map((element) => element.tag),
+      ["input", "button"],
+    );
+    assert.equal(formChildren.some((element) => element.tag === "action"), false);
+  });
+
+  it("renders an import card with a top-level input so mobile clients can show the thread id field", () => {
+    const importCard = createDraftImportCard({
+      binding: BINDING,
+      revision: 2,
+      note: "Enter a thread id to continue.",
+      defaultThreadId: "thr_existing",
+    });
+
+    const json = JSON.stringify(importCard);
+    const formElement = firstFormElement(importCard);
+    const formChildren = (formElement.elements ?? []) as Array<Record<string, unknown>>;
+    assert.match(json, /Import Existing Thread/);
+    assert.match(json, /"tag":"form"/);
+    assert.match(json, /"name":"draft_import_form"/);
+    assert.match(json, /thread_id_input/);
+    assert.match(json, /thread_id_submit/);
+    assert.match(json, /Import and Bind/);
+    assert.match(json, /"action_type":"form_submit"/);
+    assert.match(json, /"tag":"input"/);
+    assert.deepEqual(
+      formChildren.map((element) => element.tag),
+      ["input", "button"],
+    );
+    assert.equal(formChildren.some((element) => element.tag === "action"), false);
   });
 
   it("explains the next step when a host task exists but the first turn has not started yet", () => {

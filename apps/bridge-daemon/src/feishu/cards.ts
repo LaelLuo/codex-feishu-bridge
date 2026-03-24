@@ -114,6 +114,7 @@ export interface FeishuAgentReplyCardData {
 export type FeishuCardActionKind =
   | "test.ping"
   | "draft.more"
+  | "draft.import.open"
   | "draft.select.model"
   | "draft.select.effort"
   | "draft.toggle.plan-mode"
@@ -188,9 +189,10 @@ function action(actions: Array<Record<string, unknown>>): Record<string, unknown
   };
 }
 
-function form(elements: Array<Record<string, unknown>>): Record<string, unknown> {
+function form(name: string, elements: Array<Record<string, unknown>>): Record<string, unknown> {
   return {
     tag: "form",
+    name,
     elements,
   };
 }
@@ -209,6 +211,7 @@ function button(params: {
 }
 
 function formSubmitButton(params: {
+  name: string;
   text: string;
   value: FeishuCardActionValue;
   type?: "default" | "primary" | "danger";
@@ -216,14 +219,13 @@ function formSubmitButton(params: {
   return {
     tag: "button",
     type: params.type ?? "primary",
-    text: plainText(params.text),
+    name: params.name,
     action_type: "form_submit",
-    behaviors: [
-      {
-        type: "callback",
-        value: params.value,
-      },
-    ],
+    text: {
+      tag: "lark_md",
+      content: params.text,
+    },
+    value: params.value,
   };
 }
 
@@ -668,6 +670,12 @@ export function createDraftCard(
       ]),
       action([
         button({
+          text: t("feishu.draft.more.importThread"),
+          value: baseActionValue("draft.import.open", data.binding, {
+            revision: data.revision,
+          }),
+        }),
+        button({
           text: t("feishu.draft.resetDefaults"),
           value: baseActionValue("draft.use-defaults", data.binding, {
             revision: data.revision,
@@ -684,17 +692,6 @@ export function createDraftCard(
           text: t("feishu.draft.discard"),
           type: "danger",
           value: baseActionValue("draft.cancel", data.binding, {
-            revision: data.revision,
-          }),
-        }),
-      ]),
-      action([
-        overflow({
-          text: t("feishu.taskControl.more"),
-          options: [
-            { label: t("feishu.draft.more.importThread"), value: "import" },
-          ],
-          value: baseActionValue("draft.more", data.binding, {
             revision: data.revision,
           }),
         }),
@@ -905,23 +902,22 @@ export function createTaskRenameCard(
       ),
       ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       divider(),
-      form([
+      form("task_rename_form", [
         inputField({
           name: "task_title_input",
           label: t("feishu.sections.newTitle"),
           placeholder: t("feishu.rename.placeholder"),
           defaultValue: task.title,
         }),
-        action([
-          formSubmitButton({
-            text: t("feishu.rename.apply"),
-            type: "primary",
-            value: baseActionValue("task.rename.submit", binding, {
-              taskId: task.taskId,
-              revision,
-            }),
+        formSubmitButton({
+          name: "task_title_submit",
+          text: t("feishu.rename.apply"),
+          type: "primary",
+          value: baseActionValue("task.rename.submit", binding, {
+            taskId: task.taskId,
+            revision,
           }),
-        ]),
+        }),
       ]),
     ],
   };
@@ -949,22 +945,21 @@ export function createDraftImportCard(
       markdown(t("feishu.import.intro")),
       ...(note ? [divider(), markdown(`**${t("feishu.sections.update")}**\n${note}`)] : []),
       divider(),
-      form([
+      form("draft_import_form", [
         inputField({
           name: "thread_id_input",
           label: t("feishu.sections.threadId"),
           placeholder: t("feishu.import.placeholder"),
           defaultValue: data.defaultThreadId,
         }),
-        action([
-          formSubmitButton({
-            text: t("feishu.import.apply"),
-            type: "primary",
-            value: baseActionValue("draft.import.submit", binding, {
-              revision,
-            }),
+        formSubmitButton({
+          name: "thread_id_submit",
+          text: t("feishu.import.apply"),
+          type: "primary",
+          value: baseActionValue("draft.import.submit", binding, {
+            revision,
           }),
-        ]),
+        }),
       ]),
     ],
   };

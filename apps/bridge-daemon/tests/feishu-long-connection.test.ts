@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, it } from "node:test";
 
-import { createConsoleLogger, prepareBridgeDirectories } from "@codex-feishu-bridge/shared";
+import { createConsoleLogger, prepareBridgeDirectories, type Logger } from "@codex-feishu-bridge/shared";
 
 import { FeishuBridge } from "../src/feishu/bridge";
 import { createCodexRuntime } from "../src/runtime";
@@ -15,10 +15,18 @@ interface RequestRecord {
   method: string;
   url: string;
   body?: string;
+  responseMessageId?: string;
+}
+
+interface LogRecord {
+  level: "info" | "warn" | "error";
+  message: string;
+  metadata?: unknown;
 }
 
 interface LongConnectionHarness {
   calls: string[];
+  logs: LogRecord[];
   requests: RequestRecord[];
   runtime: ReturnType<typeof createCodexRuntime>;
   service: BridgeService;
@@ -92,7 +100,22 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
     FEISHU_ENCRYPT_KEY: "",
     ...envOverrides,
   });
-  const logger = createConsoleLogger("feishu-long-connection-test");
+  const baseLogger = createConsoleLogger("feishu-long-connection-test");
+  const logs: LogRecord[] = [];
+  const logger: Logger = {
+    info(message, metadata) {
+      logs.push({ level: "info", message, metadata });
+      baseLogger.info(message, metadata);
+    },
+    warn(message, metadata) {
+      logs.push({ level: "warn", message, metadata });
+      baseLogger.warn(message, metadata);
+    },
+    error(message, metadata) {
+      logs.push({ level: "error", message, metadata });
+      baseLogger.error(message, metadata);
+    },
+  };
 
   await prepareBridgeDirectories(config);
 
@@ -110,7 +133,8 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
           : String(init.body);
 
     calls.push(`${method} ${url}`);
-    requests.push({ method, url, body });
+    const requestRecord: RequestRecord = { method, url, body };
+    requests.push(requestRecord);
 
     if (!url.startsWith("https://open.feishu.cn")) {
       return originalFetch(input, init);
@@ -123,13 +147,15 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
     }
 
     if (url.includes("/open-apis/im/v1/messages/")) {
-      return new Response(JSON.stringify({ code: 0, data: { message_id: `om_reply_${requests.length}` } }), {
+      requestRecord.responseMessageId = `om_reply_${requests.length}`;
+      return new Response(JSON.stringify({ code: 0, data: { message_id: requestRecord.responseMessageId } }), {
         status: 200,
       });
     }
 
     if (url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")) {
-      return new Response(JSON.stringify({ code: 0, data: { message_id: `om_root_${requests.length}` } }), {
+      requestRecord.responseMessageId = `om_root_${requests.length}`;
+      return new Response(JSON.stringify({ code: 0, data: { message_id: requestRecord.responseMessageId } }), {
         status: 200,
       });
     }
@@ -162,6 +188,7 @@ async function createHarness(envOverrides: Record<string, string> = {}): Promise
 
     return {
       calls,
+      logs,
       requests,
       runtime,
       service,
@@ -425,7 +452,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
     }
   });
 
-  it("imports an existing runtime thread from the draft-card More menu and binds it to the current Feishu thread", async () => {
+  it("opens import existing thread from a dedicated draft-card action and binds it to the current Feishu thread", async () => {
     const harness = await createHarness();
 
     try {
@@ -454,6 +481,10 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
         "draft card reply before import",
       );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "Import Existing Thread")),
+        true,
+      );
 
       const draftEntries = (
         harness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string }> }
@@ -461,10 +492,9 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       const draftCard = draftEntries.get("oc_chat_id:omt_import_task");
       assert.ok(draftCard?.cardMessageId);
 
-      const previousImportReplyCount = harness.requests.filter(
+      const importOpenRequestCount = harness.requests.filter(
         (request) =>
-          request.method === "POST" &&
-          request.url.includes("/open-apis/im/v1/messages/") &&
+          (request.method === "POST" || request.method === "PATCH") &&
           requestContainsCardTitle(request, "Import Existing Thread"),
       ).length;
 
@@ -472,10 +502,9 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         open_message_id: draftCard?.cardMessageId,
         open_id: "ou_import_card",
         action: {
-          tag: "overflow",
-          option: "import",
+          tag: "button",
           value: {
-            kind: "draft.more",
+            kind: "draft.import.open",
             chatId: "oc_chat_id",
             threadKey: "omt_import_task",
             rootMessageId: "om_root_import_task",
@@ -485,19 +514,19 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       });
 
       assert.ok(openImportResult);
-      await waitFor(
-        () =>
-          harness.requests.filter(
-            (request) =>
-              request.method === "POST" &&
-              request.url.includes("/open-apis/im/v1/messages/") &&
-              requestContainsCardTitle(request, "Import Existing Thread"),
-          ).length > previousImportReplyCount,
-        "import card reply",
+      assert.equal(JSON.stringify(openImportResult).includes("Import Existing Thread"), true);
+      assert.equal(JSON.stringify(openImportResult).includes("thread_id_input"), true);
+      assert.equal(
+        harness.requests.filter(
+          (request) =>
+            (request.method === "POST" || request.method === "PATCH") &&
+            requestContainsCardTitle(request, "Import Existing Thread"),
+        ).length,
+        importOpenRequestCount,
       );
 
       const submitImportResult = await harness.onCardAction({
-        open_message_id: "om_import_card",
+        open_message_id: draftCard?.cardMessageId,
         open_id: "ou_import_card",
         action: {
           tag: "button",
@@ -652,6 +681,237 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         rootMessageId: "om_root_import_first",
       });
       assert.ok(secondDraftEntries.get("oc_chat_id:omt_import_second"));
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("opens the import form from the dedicated draft-card action even when Feishu omits open_message_id", async () => {
+    const harness = await createHarness();
+
+    try {
+      await harness.onMessage(
+        {
+          message_id: "om_plain_import_mobile",
+          thread_id: "omt_import_mobile",
+          root_id: "om_root_import_mobile",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "import thread on mobile" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_import_mobile",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
+        "draft card reply before mobile import",
+      );
+      assert.equal(
+        harness.requests.some((request) => requestContainsCardText(request, "Import Existing Thread")),
+        true,
+      );
+
+      const draftEntries = (
+        harness.feishu as unknown as { threadDrafts: Map<string, { cardMessageId?: string }> }
+      ).threadDrafts;
+      const draftCard = draftEntries.get("oc_chat_id:omt_import_mobile");
+      assert.ok(draftCard?.cardMessageId);
+      const importOpenRequestCount = harness.requests.filter(
+        (request) =>
+          (request.method === "POST" || request.method === "PATCH") &&
+          requestContainsCardTitle(request, "Import Existing Thread"),
+      ).length;
+
+      const result = await harness.onCardAction({
+        open_id: "ou_import_mobile",
+        action: {
+          tag: "button",
+          value: {
+            kind: "draft.import.open",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_mobile",
+            rootMessageId: "om_root_import_mobile",
+            revision: 1,
+          },
+        },
+      });
+
+      assert.ok(result);
+      assert.equal(JSON.stringify(result).includes("Import Existing Thread"), true);
+      assert.equal(JSON.stringify(result).includes("thread_id_input"), true);
+      assert.equal(
+        harness.logs.some(
+          (entry) => {
+            const metadata = (entry.metadata ?? {}) as {
+              draftCardMessageId?: string;
+              openMessageId?: string;
+            };
+            return (
+            entry.level === "info" &&
+            entry.message === "opening feishu draft import card from primary action" &&
+            metadata.draftCardMessageId === draftCard?.cardMessageId &&
+            metadata.openMessageId === undefined
+            );
+          },
+        ),
+        true,
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_root_import_mobile/reply") &&
+              requestContainsCardTitle(request, "Import Existing Thread") &&
+              requestContainsCardText(request, "thread_id_input"),
+        ),
+        "fallback import form reply on thread root for mobile clients",
+      );
+      await waitFor(
+        () =>
+          harness.logs.some(
+            (entry) => {
+              const metadata = (entry.metadata ?? {}) as {
+                replyTargetId?: string;
+                usedFallbackReply?: boolean;
+              };
+              return (
+                entry.level === "info" &&
+                entry.message === "completed feishu draft import open follow-up" &&
+                metadata.replyTargetId === "om_root_import_mobile" &&
+                metadata.usedFallbackReply === true
+              );
+            },
+          ),
+        "completed import-open follow-up log for mobile clients",
+      );
+      assert.equal(
+        harness.requests.filter(
+          (request) =>
+            (request.method === "POST" || request.method === "PATCH") &&
+            requestContainsCardTitle(request, "Import Existing Thread"),
+        ).length,
+        importOpenRequestCount + 1,
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps import form updates on the fallback reply when submit also omits open_message_id", async () => {
+    const harness = await createHarness();
+
+    try {
+      const importedThreadId = "thr_import_mobile_followup";
+      harness.runtime.seedExternalThread({
+        id: importedThreadId,
+        name: "Imported mobile thread",
+        cwd: "/tmp/workspace",
+      });
+
+      await harness.onMessage(
+        {
+          message_id: "om_plain_import_mobile_submit",
+          thread_id: "omt_import_mobile_submit",
+          root_id: "om_root_import_mobile_submit",
+          chat_id: "oc_chat_id",
+          message_type: "text",
+          content: JSON.stringify({ text: "import thread from mobile again" }),
+        },
+        {
+          sender_id: {
+            open_id: "ou_import_mobile_submit",
+          },
+        },
+      );
+
+      await waitFor(
+        () => harness.requests.some((request) => requestContainsCardTitle(request, "Create Codex Task")),
+        "draft card reply before mobile import submit",
+      );
+
+      const openImportResult = await harness.onCardAction({
+        open_id: "ou_import_mobile_submit",
+        action: {
+          tag: "button",
+          value: {
+            kind: "draft.import.open",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_mobile_submit",
+            rootMessageId: "om_root_import_mobile_submit",
+            revision: 1,
+          },
+        },
+      });
+
+      assert.ok(openImportResult);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.endsWith("/open-apis/im/v1/messages/om_root_import_mobile_submit/reply") &&
+              requestContainsCardTitle(request, "Import Existing Thread"),
+          ),
+        "fallback import form reply before mobile submit",
+      );
+
+      const fallbackImportReply = harness.requests.find(
+        (request) =>
+          request.method === "POST" &&
+          request.url.endsWith("/open-apis/im/v1/messages/om_root_import_mobile_submit/reply") &&
+          requestContainsCardTitle(request, "Import Existing Thread"),
+      );
+      assert.ok(fallbackImportReply?.responseMessageId);
+
+      const submitImportResult = await harness.onCardAction({
+        open_id: "ou_import_mobile_submit",
+        action: {
+          tag: "button",
+          form_value: {
+            thread_id_input: importedThreadId,
+          },
+          value: {
+            kind: "draft.import.submit",
+            chatId: "oc_chat_id",
+            threadKey: "omt_import_mobile_submit",
+            rootMessageId: "om_root_import_mobile_submit",
+            revision: 2,
+          },
+        },
+      });
+
+      assert.equal(submitImportResult, undefined);
+      await waitFor(
+        () =>
+          harness.service.listTasks().some(
+            (task) =>
+              task.threadId === importedThreadId &&
+              task.feishuBinding?.threadKey === "omt_import_mobile_submit",
+          ),
+        "mobile imported task binding",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${fallbackImportReply.responseMessageId}`) &&
+              requestContainsCardTitle(request, "Task: Imported mobile thread") &&
+              requestContainsCardText(request, importedThreadId),
+          ),
+        "patched fallback import reply into the bound task card",
+      );
+
+      const taskCards = (
+        harness.feishu as unknown as { threadTaskCards: Map<string, { messageId?: string }> }
+      ).threadTaskCards;
+      const savedTaskCard = taskCards.get("oc_chat_id:omt_import_mobile_submit");
+      assert.equal(savedTaskCard?.messageId, fallbackImportReply.responseMessageId);
     } finally {
       await harness.cleanup();
     }
@@ -1525,6 +1785,107 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
               requestContainsCardText(request, "Task renamed to Renamed from Feishu."),
           ),
         "patched rename card confirmation",
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps rename confirmation on the dedicated reply when submit omits open_message_id", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Rename mobile task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              requestContainsCardTitle(request, `Task: ${task.title}`),
+          ),
+        "initial bound task card before mobile rename",
+      );
+
+      const taskCards = (
+        harness.feishu as unknown as { threadTaskCards: Map<string, { messageId: string }> }
+      ).threadTaskCards;
+      const currentCard = taskCards.get(`${task.feishuBinding?.chatId}:${task.feishuBinding?.threadKey}`);
+      assert.ok(currentCard?.messageId);
+
+      const openRenameResult = await harness.onCardAction({
+        open_message_id: currentCard?.messageId,
+        open_id: "ou_rename_mobile",
+        action: {
+          tag: "button",
+          value: {
+            kind: "task.rename.open",
+            chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+            threadKey: task.feishuBinding?.threadKey ?? "omt_rename_mobile",
+            rootMessageId: task.feishuBinding?.rootMessageId,
+            taskId: task.taskId,
+            revision: 1,
+          },
+        },
+      });
+
+      assert.ok(openRenameResult);
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${task.feishuBinding?.rootMessageId}/reply`) &&
+              requestContainsCardTitle(request, `Rename Task: ${task.title}`),
+          ),
+        "rename reply card for mobile submit",
+      );
+
+      const renameReply = harness.requests.find(
+        (request) =>
+          request.method === "POST" &&
+          request.url.endsWith(`/open-apis/im/v1/messages/${task.feishuBinding?.rootMessageId}/reply`) &&
+          requestContainsCardTitle(request, `Rename Task: ${task.title}`),
+      );
+      assert.ok(renameReply?.responseMessageId);
+
+      const submitRenameResult = await harness.onCardAction({
+        open_id: "ou_rename_mobile",
+        action: {
+          tag: "button",
+          form_value: {
+            task_title_input: "Renamed from mobile submit",
+          },
+          value: {
+            kind: "task.rename.submit",
+            chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+            threadKey: task.feishuBinding?.threadKey ?? "omt_rename_mobile",
+            rootMessageId: task.feishuBinding?.rootMessageId,
+            taskId: task.taskId,
+            revision: 2,
+          },
+        },
+      });
+
+      assert.equal(submitRenameResult, undefined);
+      await waitFor(
+        () => harness.service.getTask(task.taskId)?.title === "Renamed from mobile submit",
+        "renamed task title from mobile submit",
+      );
+      await waitFor(
+        () =>
+          harness.requests.some(
+            (request) =>
+              request.method === "PATCH" &&
+              request.url.endsWith(`/open-apis/im/v1/messages/${renameReply.responseMessageId}`) &&
+              requestContainsCardTitle(request, "Rename Task: Renamed from mobile submit") &&
+              requestContainsCardText(request, "Task renamed to Renamed from mobile submit."),
+          ),
+        "patched rename reply confirmation for mobile submit",
       );
     } finally {
       await harness.cleanup();

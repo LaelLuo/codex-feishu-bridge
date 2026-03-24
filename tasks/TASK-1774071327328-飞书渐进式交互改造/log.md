@@ -13,3 +13,15 @@
 - 2026-03-21T12:41:38.7469736Z [agent] 继续收敛 `draft.create`（“在主机上开始”）超时问题：该动作已改成先同步返回当前 draft card，并在后台完成 task create/bind/card patch。
 - 2026-03-21T12:41:38.7469736Z [agent] 调整长连接测试契约：不再要求 `draft.create` 立即返回最终 task card，而是等待 Feishu 线程绑定完成，以及后台把 draft card patch 成 bound task card。
 - 2026-03-21T12:41:38.7469736Z [agent] 已重新验证 `bun test apps/bridge-daemon/tests/feishu-cards.test.ts apps/bridge-daemon/tests/feishu-long-connection.test.ts apps/bridge-daemon/tests/feishu-webhook.test.ts` 与 `bun run tsc --noEmit --skipLibCheck` 全部通过。
+- 2026-03-21T13:45:51.367Z [agent] 用户进一步提出“LLM 普通回复默认走 post + md，仅带操作控件的消息继续使用卡片”；该需求已拆分为独立任务 `TASK-1774100751367-飞书LLM回复切换到Post-MD`，先行落入 tasks 体系。
+- 2026-03-22T02:33:43.000Z [agent] 基于真实飞书日志确认：`More -> 导入已有线程` 在 overflow 动作后，后端虽然已经执行 patch + fallback reply，但客户端仍可能不显示导入表单，因此问题不在事件接收，而在该交互策略本身。
+- 2026-03-22T02:33:43.000Z [agent] 已把“导入已有线程”从 draft 卡的 `More` 菜单提升为主卡独立按钮；点击后直接同步返回导入表单卡，不再依赖 overflow 后续 patch/reply 才能看到输入框。
+- 2026-03-22T02:33:43.000Z [agent] 同时收敛导入提交链路：`draft.import.submit` 在缺失 `open_message_id` 时回退到 `draft.cardMessageId` 继续 patch 当前卡，避免移动端再次掉入 reply 兜底。
+- 2026-03-22T02:33:43.000Z [agent] 已验证 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts apps/bridge-daemon/tests/feishu-webhook.test.ts` 与 `apps/bridge-daemon` 下 `bun run tsc --noEmit --skipLibCheck` 均通过，并重启 host 供真实设备继续验证。
+- 2026-03-22T14:04:03+08:00 [agent] 继续修复真实移动端链路：为 draft import form 持久化独立的 `importCardMessageId`，使 `draft.import.submit` 在再次缺失 `open_message_id` 时优先 patch 用户当前操作的 fallback reply 表单，而不是旧 draft 卡。
+- 2026-03-22T14:04:03+08:00 [agent] 同步补齐 rename form 的同类问题：为 bound task 卡状态持久化 `renameCardMessageId`，使 `task.rename.submit` 在缺失 `open_message_id` 时仍能更新真实重命名回复卡并回显成功/错误提示。
+- 2026-03-22T14:04:03+08:00 [agent] 继续修复 imported host thread 执行环境：`BridgeService.sendMessage` 恢复出的 `sandbox` 已透传到 stdio / tcp-proxy / socket-proxy / mock runtime 的 `startTurn`，避免 imported thread 发消息时丢失宿主执行配置。
+- 2026-03-22T14:04:03+08:00 [agent] 新增长连接回归测试，覆盖 import fallback reply 后再次 submit 仍缺 `open_message_id`、rename reply submit 缺 `open_message_id`，并把 JSON 1.0 form 测试升级为结构断言（直接校验 `form.elements = [input, button]`）。
+- 2026-03-22T14:04:03+08:00 [agent] 已验证 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts apps/bridge-daemon/tests/feishu-cards.test.ts apps/bridge-daemon/tests/bridge-service-status.test.ts` 与 `bun run typecheck:daemon` 通过；`bun run test:daemon` 仍包含仓库既有的 Bun/node:test 兼容报错，不是本轮引入。
+- 2026-03-23T23:55:07+08:00 [agent] 根据后续 review 结果，对齐 `docs/architecture.md` 与当前真实实现：未绑定 draft card 的“导入已有线程”入口已不再表述为 `More -> Import Existing Thread`，而是改为主卡上的独立导入入口，避免架构文档继续误导后续 agent / 人类按旧流程理解交互路径。
+- 2026-03-23T16:34:32.966Z [agent] 已将 imported/manual-import 任务的 sandbox 恢复/投影缺口拆分为独立 bug task，避免继续混在渐进式交互主任务中追踪。
