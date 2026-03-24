@@ -29,3 +29,9 @@
 - 2026-03-24T07:58:00.000Z [agent] 按用户要求派 reviewer 全量审查即时响应契约，结论是：`/feishu/webhook` 未处理 `card.action.trigger`，且 `draft.import.submit` / `task.rename.submit` 仍会在成功后返回 `undefined`，属于高优先级缺口。
 - 2026-03-24T07:58:00.000Z [agent] 已先完成高优先级修补：webhook 模式现在会把 `card.action.trigger` 交给 `handleCardAction` 并回传同步 card payload；`draft.import.submit` 与 `task.rename.submit` 改为先同步返回“处理中”卡片，再在后台完成 import/bind/rename 与后续 patch。
 - 2026-03-24T07:58:00.000Z [agent] 已新增 / 调整回归测试，覆盖 webhook card action 同步响应、import submit 同步响应、rename submit 同步响应，并通过 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts` 与 `bun run typecheck:daemon` 验证。
+- 2026-03-24T08:20:00.000Z [agent] 继续收 reviewer 的中优先级问题：`task.rename.open`、`task.status`、`task.inspect.global` 这类独立回复卡动作现在会先同步在主任务卡上显示处理中提示，不再点击后主卡完全静默。
+- 2026-03-24T08:20:00.000Z [agent] 同时补上控制动作异常降级：`task.interrupt`、`task.retry`、`task.approve/decline/cancel-approval`、`task.archive`、`task.unbind` 如遇服务层异常，不再让卡片交互直接抛错，而是退回当前任务卡并内联显示错误。
+- 2026-03-24T08:20:00.000Z [agent] 已新增长连接回归测试，覆盖 status/inspection/rename-open 的同步提示，以及 interrupt/archive/approval 失败时的内联错误反馈；相关验证 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts`、`bun run typecheck:daemon` 全部通过。
+- 2026-03-24T08:33:00.000Z [agent] 第二轮 reviewer 进一步指出：`task.archive` / `task.unbind` 不能把“解绑成功后的本地收尾失败”吞回普通任务卡，否则会出现真实绑定已断开但 UI 仍像可继续操作的状态撒谎。
+- 2026-03-24T08:33:00.000Z [agent] 已把 `archive` / `unbind` 改成分段处理：先完成真正的解绑副作用，再独立处理持久化收尾；若收尾持久化失败，只记 warn，但仍稳定返回 archived card / draft card，不再回落到 bound task card。
+- 2026-03-24T08:33:00.000Z [agent] 同步补齐 reviewer 指出的漏测分支：新增 archive 持久化失败、unbind 持久化失败、`task.retry`、`task.unbind`、`task.decline`、`task.cancel-approval` 的失败路径回归测试；重新验证 `bun test apps/bridge-daemon/tests/feishu-long-connection.test.ts`（32 pass）、`bun test apps/bridge-daemon/tests/feishu-webhook.test.ts`（7 pass）与 `bun run typecheck:daemon` 通过。

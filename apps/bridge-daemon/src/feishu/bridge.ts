@@ -2261,6 +2261,26 @@ export class FeishuBridge {
     );
   }
 
+  private buildArchivedThreadResponseCard(params: {
+    binding: FeishuThreadBinding;
+    taskId?: string;
+    taskTitle?: string;
+    archivedAt?: string;
+    note?: string;
+  }): FeishuInteractiveCard {
+    const { binding, taskId, taskTitle, archivedAt, note } = params;
+    return createArchivedThreadCard(
+      {
+        binding,
+        taskId,
+        taskTitle,
+        archivedAt,
+        note,
+      },
+      { locale: this.options.config.feishuUiLanguage },
+    );
+  }
+
   private async renderTaskControlCard(params: {
     task: BridgeTask;
     binding: FeishuThreadBinding;
@@ -3409,6 +3429,7 @@ export class FeishuBridge {
         return this.buildCurrentTaskResponseCard({
           task,
           binding,
+          note: this.t("feishu.bridge.openingRenameForm"),
         });
       case "task.rename.submit": {
         const submittedTitle = readCardFormString(event, "task_title_input")?.trim() ?? "";
@@ -3484,6 +3505,7 @@ export class FeishuBridge {
         return this.buildCurrentTaskResponseCard({
           task,
           binding,
+          note: this.t("feishu.bridge.sendingStatusSnapshot"),
         });
       case "task.withdraw-queued-message": {
         const receiptId = value.queuedMessageId;
@@ -3528,37 +3550,57 @@ export class FeishuBridge {
         return;
       }
       case "task.interrupt":
-        await this.options.service.interruptTask(task.taskId);
-        note = this.t("feishu.bridge.interruptedTask", { taskId: task.taskId });
+        try {
+          await this.options.service.interruptTask(task.taskId);
+          note = this.t("feishu.bridge.interruptedTask", { taskId: task.taskId });
+        } catch (error) {
+          note = error instanceof Error ? error.message : String(error);
+        }
         break;
       case "task.retry":
-        await this.options.service.sendMessage(task.taskId, {
-          content: "Retry the last turn and continue.",
-          source: "feishu",
-          replyToFeishu: true,
-        });
-        note = this.t("feishu.bridge.queuedRetry", { taskId: task.taskId });
+        try {
+          await this.options.service.sendMessage(task.taskId, {
+            content: "Retry the last turn and continue.",
+            source: "feishu",
+            replyToFeishu: true,
+          });
+          note = this.t("feishu.bridge.queuedRetry", { taskId: task.taskId });
+        } catch (error) {
+          note = error instanceof Error ? error.message : String(error);
+        }
         break;
       case "task.archive": {
         const archivedAt = new Date().toISOString();
-        await this.options.service.unbindFeishuThread(task.taskId);
+        try {
+          await this.options.service.unbindFeishuThread(task.taskId);
+        } catch (error) {
+          note = error instanceof Error ? error.message : String(error);
+          break;
+        }
         this.deleteThreadDraft(binding);
         this.deleteThreadActivityCards(binding);
-        await this.saveArchivedThread({
-          chatId: binding.chatId,
-          threadKey: binding.threadKey,
-          rootMessageId: binding.rootMessageId,
-          taskId: task.taskId,
-          taskTitle: task.title,
-          archivedAt,
-        });
         this.deleteThreadTaskCard(binding);
-        return this.renderArchivedThreadCard({
+        try {
+          await this.saveArchivedThread({
+            chatId: binding.chatId,
+            threadKey: binding.threadKey,
+            rootMessageId: binding.rootMessageId,
+            taskId: task.taskId,
+            taskTitle: task.title,
+            archivedAt,
+          });
+        } catch (error) {
+          this.options.logger.warn("failed to persist archived feishu thread state", {
+            taskId: task.taskId,
+            threadKey: binding.threadKey,
+            error,
+          });
+        }
+        return this.buildArchivedThreadResponseCard({
           binding,
           taskId: task.taskId,
           taskTitle: task.title,
           archivedAt,
-          messageId: event?.open_message_id ?? currentCard?.messageId,
           note: this.t("feishu.bridge.archivedTopicContinueElsewhere"),
         });
       }
@@ -3574,15 +3616,24 @@ export class FeishuBridge {
           note = this.t("feishu.bridge.noPendingApproval");
           break;
         }
-        await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
-        note = this.t("feishu.bridge.approvalResolvedAs", {
-          requestId: approval.requestId,
-          decision,
-        });
+        try {
+          await this.options.service.resolveApproval(task.taskId, approval.requestId, decision);
+          note = this.t("feishu.bridge.approvalResolvedAs", {
+            requestId: approval.requestId,
+            decision,
+          });
+        } catch (error) {
+          note = error instanceof Error ? error.message : String(error);
+        }
         break;
       }
       case "task.unbind":
-        await this.options.service.unbindFeishuThread(task.taskId);
+        try {
+          await this.options.service.unbindFeishuThread(task.taskId);
+        } catch (error) {
+          note = error instanceof Error ? error.message : String(error);
+          break;
+        }
         this.deleteThreadTaskCard(binding);
         this.deleteThreadActivityCards(binding);
         {
@@ -3591,8 +3642,16 @@ export class FeishuBridge {
             cardMessageId: event?.open_message_id ?? currentCard?.messageId,
             cardRevision: 1,
           };
-          await this.saveThreadDraft(resetDraft);
-          return this.renderDraftCard({
+          try {
+            await this.saveThreadDraft(resetDraft);
+          } catch (error) {
+            this.options.logger.warn("failed to persist draft after feishu unbind", {
+              taskId: task.taskId,
+              threadKey: binding.threadKey,
+              error,
+            });
+          }
+          return this.buildCurrentDraftResponseCard({
             binding,
             draft: resetDraft,
             note: this.t("feishu.bridge.threadUnboundSendPlainText", { taskId: task.taskId }),
@@ -3639,6 +3698,7 @@ export class FeishuBridge {
           return this.buildCurrentTaskResponseCard({
             task,
             binding,
+            note: this.t("feishu.bridge.sendingInspectionSnapshot"),
           });
         }
         break;

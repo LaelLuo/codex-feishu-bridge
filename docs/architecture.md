@@ -66,12 +66,14 @@
 - 私聊可以直接发送普通 `text`；群聊应在话题模式里 `@` 机器人，Feishu 常会把这类消息投递为 `post` 富文本，bridge 会先提取可见正文再继续按文本消息路由
 - 已绑定任务卡提供 `Rename Task`、`Archive Task`、`Unbind Thread` 和 `More` 查询入口
 - `Rename Task` 会先下发一张独立的重命名卡；提交时先同步返回处理中状态，再更新共享 task 标题，并同步回 VSCode monitor 与 Feishu 主任务卡
+- `Rename Task` 打开表单、`Task Status` 与 `More` 查询这类“独立回复卡”动作，会先在主任务卡上同步显示一条短暂的处理中提示，避免用户点击后主卡完全无变化
 - 任意一条 Feishu 文本、图片、文件消息都会立即回一张独立的 `Task Activity` 卡，说明这条消息是直接开始 turn、注入当前 turn、还是排队到下一轮
 - 普通 Codex/agent 回复默认使用 Feishu `post + md` 富文本发送；标题、列表、代码块等 Markdown 内容优先按原样渲染，而不是再退回 interactive card
 - 超长 agent 回复会按安全字符边界拆成多条连续 post；bridge 自己的 slash/status/help/错误文本回执仍保留普通 `text`
 - 当消息因任务忙碌而排队时，独立 `Task Activity` 卡会提供 `Withdraw This Message` 和 `Run This Message Now` / `Interrupt + Run This Message Now`
 - `More` 菜单里的状态、任务、健康度、账号、额度查询都通过新的只读快照卡回复，而不是覆盖主任务卡
 - `Archive Task` 会终结当前 Feishu 话题的 bridge 绑定能力；后续同话题里的文本、图片、文件不会再继续同步到主机任务
+- `Interrupt`、`Retry`、`Approve/Decline/Cancel`、`Archive`、`Unbind` 等控制动作如果服务层抛错，不会再直接把交互请求炸掉；bridge 会退回当前任务卡并内联显示错误说明
 
 ## 目录结构
 

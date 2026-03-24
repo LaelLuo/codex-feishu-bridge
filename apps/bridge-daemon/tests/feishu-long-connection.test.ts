@@ -1421,6 +1421,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       });
 
       assert.ok(statusResult);
+      assert.equal(JSON.stringify(statusResult).includes("Sending the status snapshot now"), true);
       await waitFor(
         () =>
           harness.requests.filter(
@@ -1585,6 +1586,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
         });
 
         assert.ok(result);
+        assert.equal(JSON.stringify(result).includes("Sending that snapshot now"), true);
         await waitFor(
           () =>
             harness.requests.filter(
@@ -1849,6 +1851,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       });
 
       assert.ok(openRenameResult);
+      assert.equal(JSON.stringify(openRenameResult).includes("Opening the rename form now"), true);
       await waitFor(
         () =>
           harness.requests.filter(
@@ -1955,6 +1958,7 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       });
 
       assert.ok(openRenameResult);
+      assert.equal(JSON.stringify(openRenameResult).includes("Opening the rename form now"), true);
       await waitFor(
         () =>
           harness.requests.some(
@@ -2294,6 +2298,366 @@ describe("feishu long connection ingress", { concurrency: 1 }, () => {
       );
       await delay(50);
       assert.equal(harness.service.getTask(task.taskId)?.conversation.length ?? 0, previousConversationLength);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("shows an inline error note instead of throwing when interrupt fails", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Interrupt failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      const originalInterruptTask = harness.service.interruptTask.bind(harness.service);
+      harness.service.interruptTask = (async () => {
+        throw new Error("interrupt exploded");
+      }) as typeof harness.service.interruptTask;
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_interrupt_failure",
+          open_id: "ou_interrupt_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.interrupt",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.equal(JSON.stringify(result).includes("interrupt exploded"), true);
+      } finally {
+        harness.service.interruptTask = originalInterruptTask;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("shows an inline error note and keeps the binding when archive fails", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Archive failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      const originalUnbind = harness.service.unbindFeishuThread.bind(harness.service);
+      harness.service.unbindFeishuThread = (async () => {
+        throw new Error("archive exploded");
+      }) as typeof harness.service.unbindFeishuThread;
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_archive_failure",
+          open_id: "ou_archive_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.archive",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.equal(JSON.stringify(result).includes(`Task: ${task.title}`), true);
+        assert.equal(JSON.stringify(result).includes("archive exploded"), true);
+        assert.ok(harness.service.getTask(task.taskId)?.feishuBinding);
+      } finally {
+        harness.service.unbindFeishuThread = originalUnbind;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("shows an inline error note instead of throwing when approval resolution fails", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Approval failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      await harness.service.sendMessage(task.taskId, {
+        content: "Run a shell command for me.",
+        source: "feishu",
+        replyToFeishu: true,
+      });
+      await waitFor(
+        () => (harness.service.getTask(task.taskId)?.pendingApprovals.length ?? 0) > 0,
+        "pending approval for failure case",
+      );
+
+      const originalResolveApproval = harness.service.resolveApproval.bind(harness.service);
+      harness.service.resolveApproval = (async () => {
+        throw new Error("approval exploded");
+      }) as typeof harness.service.resolveApproval;
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_approval_failure",
+          open_id: "ou_approval_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.approve",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.equal(JSON.stringify(result).includes(`Task: ${task.title}`), true);
+        assert.equal(JSON.stringify(result).includes("approval exploded"), true);
+      } finally {
+        harness.service.resolveApproval = originalResolveApproval;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("still returns an archived card when archive persistence fails after unbinding", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Archive persistence failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      const originalSaveArchivedThread = (harness.feishu as any).saveArchivedThread.bind(harness.feishu);
+      (harness.feishu as any).saveArchivedThread = async () => {
+        throw new Error("archive persistence exploded");
+      };
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_archive_persist_failure",
+          open_id: "ou_archive_persist_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.archive",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.match(JSON.stringify(result), /Archived Codex Topic/);
+        assert.equal(harness.service.getTask(task.taskId)?.feishuBinding, undefined);
+        const taskCards = (
+          harness.feishu as unknown as { threadTaskCards: Map<string, { messageId?: string }> }
+        ).threadTaskCards;
+        assert.equal(taskCards.get(`${task.feishuBinding?.chatId}:${task.feishuBinding?.threadKey}`), undefined);
+      } finally {
+        (harness.feishu as any).saveArchivedThread = originalSaveArchivedThread;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("still returns a draft card when draft persistence fails after unbind", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Unbind persistence failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      const originalSaveThreadDraft = (harness.feishu as any).saveThreadDraft.bind(harness.feishu);
+      (harness.feishu as any).saveThreadDraft = async () => {
+        throw new Error("draft persistence exploded");
+      };
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_unbind_persist_failure",
+          open_id: "ou_unbind_persist_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.unbind",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.equal(JSON.stringify(result).includes("Create Codex Task"), true);
+        assert.equal(harness.service.getTask(task.taskId)?.feishuBinding, undefined);
+      } finally {
+        (harness.feishu as any).saveThreadDraft = originalSaveThreadDraft;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  for (const approvalKind of ["task.decline", "task.cancel-approval"] as const) {
+    it(`shows an inline error note instead of throwing when ${approvalKind} fails`, async () => {
+      const harness = await createHarness();
+
+      try {
+        const task = await harness.service.createTask({
+          title: `${approvalKind} failure task`,
+        });
+
+        await harness.feishu.bindTaskToNewTopic(task.taskId);
+        await harness.service.sendMessage(task.taskId, {
+          content: "Run a shell command for me.",
+          source: "feishu",
+          replyToFeishu: true,
+        });
+        await waitFor(
+          () => (harness.service.getTask(task.taskId)?.pendingApprovals.length ?? 0) > 0,
+          `${approvalKind} pending approval`,
+        );
+
+        const originalResolveApproval = harness.service.resolveApproval.bind(harness.service);
+        harness.service.resolveApproval = (async () => {
+          throw new Error(`${approvalKind} exploded`);
+        }) as typeof harness.service.resolveApproval;
+
+        try {
+          const result = await harness.onCardAction({
+            open_message_id: `om_${approvalKind}_failure`,
+            open_id: `ou_${approvalKind}_failure`,
+            action: {
+              tag: "button",
+              value: {
+                kind: approvalKind,
+                chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+                threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+                rootMessageId: task.feishuBinding?.rootMessageId,
+                taskId: task.taskId,
+                revision: 1,
+              },
+            },
+          });
+
+          assert.ok(result);
+          assert.equal(JSON.stringify(result).includes(`${approvalKind} exploded`), true);
+        } finally {
+          harness.service.resolveApproval = originalResolveApproval;
+        }
+      } finally {
+        await harness.cleanup();
+      }
+    });
+  }
+
+  it("shows an inline error note instead of throwing when retry fails", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Retry failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      const originalSendMessage = harness.service.sendMessage.bind(harness.service);
+      harness.service.sendMessage = (async () => {
+        throw new Error("retry exploded");
+      }) as typeof harness.service.sendMessage;
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_retry_failure",
+          open_id: "ou_retry_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.retry",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.equal(JSON.stringify(result).includes("retry exploded"), true);
+      } finally {
+        harness.service.sendMessage = originalSendMessage;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("shows an inline error note instead of throwing when unbind fails", async () => {
+    const harness = await createHarness();
+
+    try {
+      const task = await harness.service.createTask({
+        title: "Unbind failure task",
+      });
+
+      await harness.feishu.bindTaskToNewTopic(task.taskId);
+      const originalUnbind = harness.service.unbindFeishuThread.bind(harness.service);
+      harness.service.unbindFeishuThread = (async () => {
+        throw new Error("unbind exploded");
+      }) as typeof harness.service.unbindFeishuThread;
+
+      try {
+        const result = await harness.onCardAction({
+          open_message_id: "om_unbind_failure",
+          open_id: "ou_unbind_failure",
+          action: {
+            tag: "button",
+            value: {
+              kind: "task.unbind",
+              chatId: task.feishuBinding?.chatId ?? "oc_chat_id",
+              threadKey: task.feishuBinding?.threadKey ?? "om_root_2",
+              rootMessageId: task.feishuBinding?.rootMessageId,
+              taskId: task.taskId,
+              revision: 1,
+            },
+          },
+        });
+
+        assert.ok(result);
+        assert.equal(JSON.stringify(result).includes("unbind exploded"), true);
+        assert.ok(harness.service.getTask(task.taskId)?.feishuBinding);
+      } finally {
+        harness.service.unbindFeishuThread = originalUnbind;
+      }
     } finally {
       await harness.cleanup();
     }
